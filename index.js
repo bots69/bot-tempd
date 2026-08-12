@@ -8,6 +8,7 @@ const CREATE_VOICE_CHANNEL_ID = '1536689417136119888';
 const PARENT_CATEGORY_ID = '1535491760627646524';
 const ADMIN_ROLE_ID = '1535375782736560128';
 const TARGET_ROOM_ID = '1536693109662949406'; // الروم المحدد فقط لحذف الرسائل وقفل الشات
+const LOG_ROOM_ID = '1536977594702888960'; // روم سجلات الدخول والخروج الصوتي
 const SECRET_WORD = 'كلمة_السر'; // ضع الكلمة المطلوبة هنا
 const roomOwners = new Map();
 const activeCollectors = new Map();
@@ -76,8 +77,9 @@ client.on('messageCreate', async (msg) => {
     }
 });
 
-// نظام إنشاء وحذف الرومات المؤقتة
+// نظام إشعارات الدخول والخروج للصوتيات تلقائياً
 client.on('voiceStateUpdate', async (oldState, newState) => {
+    // 1. إنشاء روم مؤقت عند دخول روم صناعة الرومات
     if (newState.channelId === CREATE_VOICE_CHANNEL_ID) {
         const channel = await newState.guild.channels.create({
             name: `channel ${newState.member.user.username}`,
@@ -88,6 +90,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         await newState.member.voice.setChannel(channel);
     }
 
+    // 2. حذف الروم المؤقت إذا فاض
     if (oldState.channelId && oldState.channelId !== CREATE_VOICE_CHANNEL_ID) {
         const channel = oldState.channel;
         if (channel && roomOwners.has(channel.id) && channel.members.size === 0) {
@@ -95,6 +98,52 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
             activeCollectors.delete(channel.id);
             await channel.delete().catch(() => {});
         }
+    }
+
+    // 3. إرسال إشعار الدخول (Join Channel)
+    const logChannel = await newState.guild.channels.fetch(LOG_ROOM_ID).catch(() => {});
+    if (logChannel && !oldState.channelId && newState.channelId) {
+        const member = newState.member;
+        const joinedChannel = newState.channel;
+        
+        // جلب الأعضاء الموجودين في الروم وترتيبهم تحت بعض
+        const otherMembers = Array.from(joinedChannel.members.values())
+            .filter(m => m.id !== member.id)
+            .map(m => `<@${m.id}>`);
+        
+        const membersText = otherMembers.length > 0 ? otherMembers.join('\n') : `No Members In\nChannel`;
+
+        const embed = new EmbedBuilder()
+            .setAuthor({ name: member.user.tag, iconURL: member.user.displayAvatarURL() })
+            .setTitle('Join Channel')
+            .setDescription(`**User :** <@${member.id}>\n**To :** <#${joinedChannel.id}>\n**Members :**\n${membersText}`)
+            .setColor(0x2f3136)
+            .setTimestamp();
+
+        await logChannel.send({ embeds: [embed] }).catch(() => {});
+    }
+
+    // 4. إرسال إشعار الخروج (Leave Channel)
+    if (logChannel && oldState.channelId && (!newState.channelId || newState.channelId !== oldState.channelId)) {
+        const member = oldState.member;
+        const leftChannel = oldState.channel;
+        
+        let membersText = 'No Members In\nChannel';
+        if (leftChannel) {
+            const remainingMembers = Array.from(leftChannel.members.values()).map(m => `<@${m.id}>`);
+            if (remainingMembers.length > 0) {
+                membersText = remainingMembers.join('\n');
+            }
+        }
+
+        const embed = new EmbedBuilder()
+            .setAuthor({ name: member.user.tag, iconURL: member.user.displayAvatarURL() })
+            .setTitle('Leave Channel')
+            .setDescription(`**User :** <@${member.id}>\n**From :** ${leftChannel ? `<#${leftChannel.id}>` : '#unknown'}\n**Members :**\n${membersText}`)
+            .setColor(0x2f3136)
+            .setTimestamp();
+
+        await logChannel.send({ embeds: [embed] }).catch(() => {});
     }
 });
 
@@ -154,7 +203,7 @@ client.on('interactionCreate', async (i) => {
         col.on('collect', async m => {
             await m.delete().catch(() => {});
 
-            // إزالة صلاحية الكتابة فوراً من الروم النصي (i.channel) قبل تنفيذ أو معالجة أي شيء
+            // إزالة صلاحية الكتابة فوراً من الروم النصي (i.channel) قبل تنفيذ أو معالجة أي شيء وبدون تأخير
             await i.channel.permissionOverwrites.delete(i.user.id).catch(() => {});
 
             if (i.customId === 'rename') {
