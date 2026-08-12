@@ -7,6 +7,7 @@ const client = new Client({
 const CREATE_VOICE_CHANNEL_ID = '1536689417136119888';
 const PARENT_CATEGORY_ID = '1535491760627646524';
 const ADMIN_ROLE_ID = '1535375782736560128';
+const SECRET_WORD = 'كلمة_السر'; // ضع الكلمة المطلوبة هنا
 const roomOwners = new Map();
 const activeCollectors = new Map();
 
@@ -14,30 +15,29 @@ client.on('ready', () => {
     console.log(`Bot is ready as ${client.user.tag}`);
 });
 
-// نظام إنشاء وحذف الرومات المؤقتة
-client.on('voiceStateUpdate', async (oldState, newState) => {
-    if (newState.channelId === CREATE_VOICE_CHANNEL_ID) {
-        const channel = await newState.guild.channels.create({
-            name: `channel ${newState.member.user.username}`,
-            type: ChannelType.GuildVoice,
-            parent: PARENT_CATEGORY_ID,
-        });
-        roomOwners.set(channel.id, newState.member.id);
-        await newState.member.voice.setChannel(channel);
-    }
+// نظام مراقبة الرسائل لإغلاق الروم وحذف الرسالة عند كتابة الكلمة
+client.on('messageCreate', async (msg) => {
+    if (msg.author.bot) return;
 
-    if (oldState.channelId && oldState.channelId !== CREATE_VOICE_CHANNEL_ID) {
-        const channel = oldState.channel;
-        if (channel && roomOwners.has(channel.id) && channel.members.size === 0) {
-            roomOwners.delete(channel.id);
-            activeCollectors.delete(channel.id);
-            await channel.delete().catch(() => {});
+    // التحقق مما إذا كان الشات الذي كُتبت فيه الرسالة هو روم صوتي مؤقت
+    const channel = msg.channel;
+    if (channel.type === ChannelType.GuildVoice || (channel.parent && channel.parentId === PARENT_CATEGORY_ID)) {
+        if (msg.content.trim() === SECRET_WORD) {
+            try {
+                // حذف رسالة العضو فوراً
+                await msg.delete();
+            } catch (error) {}
+
+            try {
+                // إغلاق الروم بوجه العضو (منع الرؤية والكتابة عنه تماماً)
+                await channel.permissionOverwrites.edit(
+                    msg.author, 
+                    { ViewChannel: false, SendMessages: false }
+                );
+            } catch (error) {}
         }
     }
-});
 
-// أمر إرسال لوحة التحكم (مقتصر حصرياً على الرول الإداري)
-client.on('messageCreate', async (msg) => {
     if (msg.content === '-setup' || msg.content === '!setup') {
         if (!msg.member || !msg.member.roles.cache.has(ADMIN_ROLE_ID)) {
             return msg.react('❌').catch(() => {});
@@ -73,6 +73,28 @@ client.on('messageCreate', async (msg) => {
     }
 });
 
+// نظام إنشاء وحذف الرومات المؤقتة
+client.on('voiceStateUpdate', async (oldState, newState) => {
+    if (newState.channelId === CREATE_VOICE_CHANNEL_ID) {
+        const channel = await newState.guild.channels.create({
+            name: `channel ${newState.member.user.username}`,
+            type: ChannelType.GuildVoice,
+            parent: PARENT_CATEGORY_ID,
+        });
+        roomOwners.set(channel.id, newState.member.id);
+        await newState.member.voice.setChannel(channel);
+    }
+
+    if (oldState.channelId && oldState.channelId !== CREATE_VOICE_CHANNEL_ID) {
+        const channel = oldState.channel;
+        if (channel && roomOwners.has(channel.id) && channel.members.size === 0) {
+            roomOwners.delete(channel.id);
+            activeCollectors.delete(channel.id);
+            await channel.delete().catch(() => {});
+        }
+    }
+});
+
 // نظام الأزرار والتحكم الكامل
 client.on('interactionCreate', async (i) => {
     if (!i.isButton()) return;
@@ -94,7 +116,6 @@ client.on('interactionCreate', async (i) => {
 
     const reply = (text) => i.reply({ content: text, ephemeral: true });
 
-    // الأزرار الأربعة الفورية (لا تحتاج كتابة ولا تفك الشات)
     if (i.customId === 'lock') {
         await channel.permissionOverwrites.edit(i.guild.id, { Connect: false });
         reply('تم قفل الروم');
@@ -111,9 +132,7 @@ client.on('interactionCreate', async (i) => {
         await channel.permissionOverwrites.edit(i.guild.id, { ViewChannel: true });
         reply('تم اظهار الروم');
     } 
-    // باقي الأزرار التي تتطلب كتابة (يتم فك الشات تلقائياً للمستخدم ليتمكن من الكتابة)
     else if (['rename', 'transfer', 'limit', 'ban', 'allow', 'kick', 'mute', 'unmute'].includes(i.customId)) {
-        // فك الشات للمستخدم تلقائياً عند النضغط على أي زر يتطلب إدخال
         await i.channel.permissionOverwrites.edit(i.user.id, { SendMessages: true }).catch(() => {});
 
         if (i.customId === 'rename') {
