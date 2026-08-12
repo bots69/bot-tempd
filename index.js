@@ -100,7 +100,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
     const logChannel = await newState.guild.channels.fetch(LOG_ROOM_ID).catch(() => {});
     const disconnectLogChannel = await newState.guild.channels.fetch(DISCONNECT_LOG_ROOM_ID).catch(() => {});
 
-    // 3. مراقبة الدفن (Disconnect الحقيقي أو الضغط على زر الديسكونكت الأحمر من البروفايل)
+    // 3. مراقبة الدفن (Disconnect الحقيقي أو الطرد/الديسكونكت من البروفايل)
     if (disconnectLogChannel && oldState.channelId && !newState.channelId) {
         let disconnectedBy = null;
         const member = newState.member;
@@ -108,19 +108,19 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 
         try {
             const fetchedLogs = await newState.guild.fetchAuditLogs({
-                limit: 3,
+                limit: 5,
                 type: AuditLogEvent.MemberDisconnect,
             });
             const auditLog = fetchedLogs.entries.find(entry => 
                 entry.target.id === member.id && 
-                (Date.now() - entry.createdTimestamp < 7000)
+                (Date.now() - entry.createdTimestamp < 8000)
             );
             if (auditLog) {
                 disconnectedBy = auditLog.executor;
             }
         } catch (e) {}
 
-        // إذا كان الشخص هو من ضغط زر الديسكونكت من بروفايله أو فصله شخص آخر، سيظهر السجل الحقيقي
+        // إذا كان هناك شخص مسؤول عن إخراجه (عبر البروفايل أو الطرد)
         if (disconnectedBy) {
             const membersText = leftChannel && leftChannel.members.size > 0 
                 ? Array.from(leftChannel.members.values()).map(m => `<@${m.id}>`).join('\n')
@@ -146,10 +146,10 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 
         try {
             const fetchedLogs = await newState.guild.fetchAuditLogs({
-                limit: 3,
+                limit: 5,
                 type: AuditLogEvent.MemberMove,
             });
-            const auditLog = fetchedLogs.entries.find(entry => entry.target.id === member.id && (Date.now() - entry.createdTimestamp < 6000));
+            const auditLog = fetchedLogs.entries.find(entry => entry.target.id === member.id && (Date.now() - entry.createdTimestamp < 8000));
             if (auditLog) {
                 movedBy = auditLog.executor;
                 executorTag = movedBy.tag;
@@ -188,17 +188,17 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         await logChannel.send({ embeds: [embed] }).catch(() => {});
     }
 
-    // 6. إشعار الخروج العادي (Leave Channel) - مستقل لوحده تماماً
-    if (logChannel && oldState.channelId && (!newState.channelId || newState.channelId !== oldState.channelId)) {
-        // نتأكد أولاً أنه ليس ديسكونكت حقيقي مأخوذ في روم الدفن لكي لا يتداخل
+    // 6. إشعار الخروج العادي (Leave Channel) - فقط عند الخروج الطبيعي اليدوي
+    if (logChannel && oldState.channelId && !newState.channelId) {
         let isDisconnectAction = false;
         try {
-            const fetchedLogs = await newState.guild.fetchAuditLogs({ limit: 2, type: AuditLogEvent.MemberDisconnect });
-            const auditLog = fetchedLogs.entries.find(entry => entry.target.id === oldState.member.id && (Date.now() - entry.createdTimestamp < 4000));
+            const fetchedLogs = await newState.guild.fetchAuditLogs({ limit: 5, type: AuditLogEvent.MemberDisconnect });
+            const auditLog = fetchedLogs.entries.find(entry => entry.target.id === oldState.member.id && (Date.now() - entry.createdTimestamp < 8000));
             if (auditLog) isDisconnectAction = true;
         } catch (e) {}
 
-        if (!isDisconnectAction && !newState.channelId) {
+        // إذا لم يكن هناك إجراء طرد أو ديسكونكت خارجي، فهذا خروج طبيعي
+        if (!isDisconnectAction) {
             const member = oldState.member;
             const leftChannel = oldState.channel;
             
