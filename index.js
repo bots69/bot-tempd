@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionFlagsBits } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionFlagsBits, AuditLogEvent } = require('discord.js');
 
 const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildVoiceStates]
@@ -105,68 +105,71 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
     const logChannel = await newState.guild.channels.fetch(LOG_ROOM_ID).catch(() => {});
     const disconnectLogChannel = await newState.guild.channels.fetch(DISCONNECT_LOG_ROOM_ID).catch(() => {});
 
-    // 3. مراقبة الدفن (Disconnect / Server Mute) أو السحب (Move Member)
-    // الكشف عن الدفن (عندما يتم قطع اتصال الشخص أو عمل ميوت سيرفر له من قبل شخص آخر)
+    // 3. مراقبة الدفن (Disconnect) أو السحب (Move Member)
     if (disconnectLogChannel) {
-        // حالة الدفن أو قطع الاتصال من روم
+        // حالة الدفن (فصل العضو من روم بواسطة شخص آخر)
         if (oldState.channelId && !newState.channelId) {
-            // يمكن التحقق مما إذا تم طرده أو فصله
-            // سنرسل إشعار Disconnect Member
-            const member = newState.member;
-            const leftChannel = oldState.channel;
+            let disconnectedBy = null;
+            let executorTag = newState.member.user.tag;
+            let executorAvatar = newState.member.user.displayAvatarURL();
 
-            // محاولة معرفة من قام بفعل ذلك عبر سجل التدقيق (Audit Logs)
-            let executorTag = member.user.tag;
-            let executorAvatar = member.user.displayAvatarURL();
-            
             try {
                 const fetchedLogs = await newState.guild.fetchAuditLogs({
-                    limit: 1,
-                    type: 20, // MEMBER_DISCONNECT أو نحو ذلك
+                    limit: 3,
+                    type: AuditLogEvent.MemberDisconnect,
                 });
-                const auditLog = fetchedLogs.entries.first();
-                if (auditLog && auditLog.target.id === member.id && (Date.now() - auditLog.createdTimestamp < 5000)) {
-                    executorTag = auditLog.executor.tag;
-                    executorAvatar = auditLog.executor.displayAvatarURL();
+                const auditLog = fetchedLogs.entries.find(entry => entry.target.id === newState.member.id && (Date.now() - entry.createdTimestamp < 6000));
+                if (auditLog) {
+                    disconnectedBy = auditLog.executor;
+                    executorTag = disconnectedBy.tag;
+                    executorAvatar = disconnectedBy.displayAvatarURL();
                 }
             } catch (e) {}
 
-            const membersText = leftChannel && leftChannel.members.size > 0 
-                ? Array.from(leftChannel.members.values()).map(m => `<@${m.id}> ${m.voice.serverMute ? '🔇' : ''}`).join('\n')
-                : 'No Members In\nChannel';
+            // إذا لم يتم العثور على سجل تدقيق يفيد بأن شخصاً آخر فصله (أي أنه خرج بنفسه طبيعياً)، فلن يتم إرسال أي شيء.
+            if (disconnectedBy) {
+                const member = newState.member;
+                const leftChannel = oldState.channel;
 
-            const embed = new EmbedBuilder()
-                .setAuthor({ name: executorTag, iconURL: executorAvatar })
-                .setTitle('Disconnect Member')
-                .setDescription(`**To :** <@${member.id}>\n**By :** <@${member.id}>\n**From :** ${leftChannel ? `<#${leftChannel.id}>` : '#unknown'}\n**Members :**\n${membersText}`)
-                .setColor(0x2f3136)
-                .setTimestamp();
+                const membersText = leftChannel && leftChannel.members.size > 0 
+                    ? Array.from(leftChannel.members.values()).map(m => `<@${m.id}>`).join('\n')
+                    : 'No Members In\nChannel';
 
-            await disconnectLogChannel.send({ embeds: [embed] }).catch(() => {});
+                const embed = new EmbedBuilder()
+                    .setAuthor({ name: executorTag, iconURL: executorAvatar })
+                    .setTitle('Disconnect Member')
+                    .setDescription(`**To :** <@${member.id}>\n**By :** <@${disconnectedBy.id}>\n**From :** ${leftChannel ? `<#${leftChannel.id}>` : '#unknown'}\n**Members :**\n${membersText}`)
+                    .setColor(0x2f3136)
+                    .setTimestamp();
+
+                await disconnectLogChannel.send({ embeds: [embed] }).catch(() => {});
+            }
         }
 
-        // حالة سحب عضو (Move Member) أو تغيير روم
+        // حالة سحب عضو (Move Member)
         if (oldState.channelId && newState.channelId && oldState.channelId !== newState.channelId) {
             const member = newState.member;
             let executorTag = member.user.tag;
             let executorAvatar = member.user.displayAvatarURL();
+            let movedBy = member;
 
             try {
                 const fetchedLogs = await newState.guild.fetchAuditLogs({
-                    limit: 1,
-                    type: 24, // MEMBER_MOVE
+                    limit: 3,
+                    type: AuditLogEvent.MemberMove,
                 });
-                const auditLog = fetchedLogs.entries.first();
-                if (auditLog && auditLog.target.id === member.id && (Date.now() - auditLog.createdTimestamp < 5000)) {
-                    executorTag = auditLog.executor.tag;
-                    executorAvatar = auditLog.executor.displayAvatarURL();
+                const auditLog = fetchedLogs.entries.find(entry => entry.target.id === member.id && (Date.now() - entry.createdTimestamp < 6000));
+                if (auditLog) {
+                    movedBy = auditLog.executor;
+                    executorTag = movedBy.tag;
+                    executorAvatar = movedBy.displayAvatarURL();
                 }
             } catch (e) {}
 
             const embed = new EmbedBuilder()
                 .setAuthor({ name: executorTag, iconURL: executorAvatar })
                 .setTitle('Move Member')
-                .setDescription(`**To :** <@${member.id}>\n**By :** <@${member.id}>\n**From :** <#${oldState.channelId}>\n**To :** <#${newState.channelId}>`)
+                .setDescription(`**To :** <@${member.id}>\n**By :** <@${movedBy.id}>\n**From :** <#${oldState.channelId}>\n**To :** <#${newState.channelId}>`)
                 .setColor(0x2f3136)
                 .setTimestamp();
 
@@ -195,7 +198,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         await logChannel.send({ embeds: [embed] }).catch(() => {});
     }
 
-    // 5. إرسال إشعار الخروج (Leave Channel)
+    // 5. إرسال إشعار الخروج (Leave Channel) - للخروج العادي من الروم
     if (logChannel && oldState.channelId && (!newState.channelId || newState.channelId !== oldState.channelId)) {
         const member = oldState.member;
         const leftChannel = oldState.channel;
