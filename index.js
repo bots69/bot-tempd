@@ -18,7 +18,7 @@ client.on('ready', () => {
 client.on('voiceStateUpdate', async (oldState, newState) => {
     if (newState.channelId === CREATE_VOICE_CHANNEL_ID) {
         const channel = await newState.guild.channels.create({
-            name: `chanell ${newState.member.user.username}`,
+            name: `channel ${newState.member.user.username}`,
             type: ChannelType.GuildVoice,
             parent: PARENT_CATEGORY_ID,
         });
