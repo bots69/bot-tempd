@@ -9,179 +9,75 @@ const client = new Client({
     ]
 });
 
-// أرقام الآيديات المطلوبة بدقة
-const CREATE_VOICE_CHANNEL_ID = '1536689417136119888';
+// الآيديات المطلوبة
+const CREATE_VOICE_CHANNEL_ID = '1535491760627646524'; // الآيدي اللي طلبت أن الرومات تنشأ فيه
 const CONTROL_TEXT_CHANNEL_ID = '1536693109662949406';
 
-client.on('ready', async () => {
-    console.log(`Logged in as ${client.user.tag}! Bot is ready.`);
-
-    // إرسال لوحة التحكم تلقائياً في الروم المحدد بمجرد تشغيل البوت
-    try {
-        const textChannel = await client.channels.fetch(CONTROL_TEXT_CHANNEL_ID);
-        if (textChannel && textChannel.isTextBased()) {
-            const embed = new EmbedBuilder()
-                .setTitle('Temp Control')
-                .setDescription('للتحكم بالروم الضغط على الازار')
-                .setColor(0x2f3136);
-
-            const row1 = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('temp_rename').setLabel('تغير الاسم').setEmoji('👤').setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder().setCustomId('temp_transfer').setLabel('نقل الملكية').setEmoji('✍️').setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder().setCustomId('temp_limit').setLabel('حد الروم').setEmoji('🎧').setStyle(ButtonStyle.Secondary)
-            );
-
-            const row2 = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('temp_lock').setLabel('قفل الروم').setEmoji('🔒').setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder().setCustomId('temp_unlock').setLabel('فتح الروم').setEmoji('🔓').setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder().setCustomId('temp_hide').setLabel('اخفاء الروم').setEmoji('👁️‍🗨️').setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder().setCustomId('temp_unhide').setLabel('اظهار الروم').setEmoji('👁️').setStyle(ButtonStyle.Secondary)
-            );
-
-            const row3 = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('temp_ban').setLabel('منع').setEmoji('👤').setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder().setCustomId('temp_allow').setLabel('السماح').setEmoji('👤').setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder().setCustomId('temp_kick').setLabel('طرد عضو').setEmoji('🚪').setStyle(ButtonStyle.Secondary)
-            );
-
-            const row4 = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('temp_mute').setLabel('ميوت').setEmoji('🎤').setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder().setCustomId('temp_unmute').setLabel('فك ميوت').setEmoji('🎙️').setStyle(ButtonStyle.Secondary)
-            );
-
-            await textChannel.send({
-                embeds: [embed],
-                components: [row1, row2, row3, row4]
-            });
-            console.log('تم إرسال لوحة التحكم تلقائياً في الروم المحدد بنجاح.');
-        }
-    } catch (error) {
-        console.error('فشل إرسال اللوحة تلقائياً:', error);
-    }
+client.on('ready', () => {
+    console.log(`Bot is ready as ${client.user.tag}`);
 });
 
-// نظام إنشاء الروم الصوتي تلقائياً عند دخول الآيدي المحدد
+// 1. نظام إنشاء الروم
 client.on('voiceStateUpdate', async (oldState, newState) => {
-    try {
-        if (newState.channelId === CREATE_VOICE_CHANNEL_ID) {
-            const member = newState.member;
-            const guild = newState.guild;
+    // عند دخول الروم الأساسي
+    if (newState.channelId === CREATE_VOICE_CHANNEL_ID) {
+        const guild = newState.guild;
+        const member = newState.member;
+        
+        const channel = await guild.channels.create({
+            name: `room-${member.user.username}`,
+            type: ChannelType.GuildVoice,
+            parent: newState.channel.parentId,
+        });
+        await member.voice.setChannel(channel);
+    }
 
-            const channel = await guild.channels.create({
-                name: `room-${member.user.username}`,
-                type: ChannelType.GuildVoice,
-                parent: newState.channel.parentId,
-                permissionOverwrites: [
-                    {
-                        id: guild.id,
-                        allow: [PermissionFlagsBits.Connect],
-                    },
-                    {
-                        id: member.id,
-                        allow: [PermissionFlagsBits.ManageChannels, PermissionFlagsBits.MuteMembers, PermissionFlagsBits.DeafenMembers],
-                    },
-                ],
-            });
-
-            await member.voice.setChannel(channel);
+    // 2. نظام حذف الروم عند خروج الجميع
+    if (oldState.channelId && oldState.channelId !== CREATE_VOICE_CHANNEL_ID) {
+        const channel = oldState.channel;
+        if (channel && channel.name.startsWith('room-') && channel.members.size === 0) {
+            await channel.delete().catch(console.error);
         }
-    } catch (error) {
-        console.error('خطأ أثناء إنشاء الروم الصوتي:', error);
     }
 });
 
+// 3. أمر الـ Setup لإرسال الأزرار
 client.on('messageCreate', async (message) => {
-    if (message.author.bot) return;
-
-    if (message.content === '-setup' || message.content === '!setup') {
+    if (message.content === '-setup') {
         const embed = new EmbedBuilder()
-            .setTitle('Temp Control')
-            .setDescription('للتحكم بالروم الضغط على الازار')
+            .setTitle('لوحة التحكم بالروم')
+            .setDescription('استخدم الأزرار أدناه للتحكم في غرفتك الصوتية.')
             .setColor(0x2f3136);
 
         const row1 = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('temp_rename').setLabel('تغير الاسم').setEmoji('👤').setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder().setCustomId('temp_transfer').setLabel('نقل الملكية').setEmoji('✍️').setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder().setCustomId('temp_limit').setLabel('حد الروم').setEmoji('🎧').setStyle(ButtonStyle.Secondary)
+            new ButtonBuilder().setCustomId('temp_lock').setLabel('قفل').setStyle(ButtonStyle.Danger),
+            new ButtonBuilder().setCustomId('temp_unlock').setLabel('فتح').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId('temp_hide').setLabel('إخفاء').setStyle(ButtonStyle.Secondary)
         );
 
-        const row2 = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('temp_lock').setLabel('قفل الروم').setEmoji('🔒').setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder().setCustomId('temp_unlock').setLabel('فتح الروم').setEmoji('🔓').setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder().setCustomId('temp_hide').setLabel('اخفاء الروم').setEmoji('👁️‍🗨️').setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder().setCustomId('temp_unhide').setLabel('اظهار الروم').setEmoji('👁️').setStyle(ButtonStyle.Secondary)
-        );
-
-        const row3 = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('temp_ban').setLabel('منع').setEmoji('👤').setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder().setCustomId('temp_allow').setLabel('السماح').setEmoji('👤').setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder().setCustomId('temp_kick').setLabel('طرد عضو').setEmoji('🚪').setStyle(ButtonStyle.Secondary)
-        );
-
-        const row4 = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('temp_mute').setLabel('ميوت').setEmoji('🎤').setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder().setCustomId('temp_unmute').setLabel('فك ميوت').setEmoji('🎙️').setStyle(ButtonStyle.Secondary)
-        );
-
-        await message.channel.send({
-            embeds: [embed],
-            components: [row1, row2, row3, row4]
-        });
+        await message.channel.send({ embeds: [embed], components: [row1] });
     }
 });
 
+// 4. معالجة الأزرار
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isButton()) return;
+    const channel = interaction.member.voice.channel;
+    if (!channel) return interaction.reply({ content: 'لازم تدخل الروم أولاً!', ephemeral: true });
 
-    const member = interaction.member;
-    const voiceChannel = member?.voice?.channel;
-
-    if (!voiceChannel) {
-        return interaction.reply({ content: 'يجب أن تكون داخل روم صوتي لكي تستخدم أزرار التحكم!', ephemeral: true });
-    }
-
-    try {
-        if (interaction.customId === 'temp_lock') {
-            await voiceChannel.permissionOverwrites.edit(interaction.guild.roles.everyone, { Connect: false });
-            await interaction.reply({ content: '🔒 تم قفل الروم بنجاح.', ephemeral: true });
-        } 
-        else if (interaction.customId === 'temp_unlock') {
-            await voiceChannel.permissionOverwrites.edit(interaction.guild.roles.everyone, { Connect: true });
-            await interaction.reply({ content: '🔓 تم فتح الروم بنجاح.', ephemeral: true });
-        } 
-        else if (interaction.customId === 'temp_hide') {
-            await voiceChannel.permissionOverwrites.edit(interaction.guild.roles.everyone, { ViewChannel: false });
-            await interaction.reply({ content: '👁️‍🗨️ تم اخفاء الروم بنجاح.', ephemeral: true });
-        } 
-        else if (interaction.customId === 'temp_unhide') {
-            await voiceChannel.permissionOverwrites.edit(interaction.guild.roles.everyone, { ViewChannel: true });
-            await interaction.reply({ content: '👁️ تم اظهار الروم بنجاح.', ephemeral: true });
-        }
-        else if (interaction.customId === 'temp_mute') {
-            await voiceChannel.permissionOverwrites.edit(interaction.guild.roles.everyone, { Speak: false });
-            await interaction.reply({ content: '🎤 تم عمل ميوت للروم.', ephemeral: true });
-        }
-        else if (interaction.customId === 'temp_unmute') {
-            await voiceChannel.permissionOverwrites.edit(interaction.guild.roles.everyone, { Speak: true });
-            await interaction.reply({ content: '🎙️ تم فك الميوت عن الروم.', ephemeral: true });
-        }
-        else {
-            await interaction.reply({ content: 'تم استلام طلبك وجاري معالجته.', ephemeral: true });
-        }
-    } catch (error)  {
-        console.error(error);
-        await interaction.reply({ content: 'حدث خطأ أثناء تنفيذ الأمر، تأكد أن البوت يملك صلاحيات كافية.', ephemeral: true });
+    if (interaction.customId === 'temp_lock') {
+        await channel.permissionOverwrites.edit(interaction.guild.id, { Connect: false });
+        interaction.reply({ content: '🔒 تم قفل الروم', ephemeral: true });
+    } else if (interaction.customId === 'temp_unlock') {
+        await channel.permissionOverwrites.edit(interaction.guild.id, { Connect: true });
+        interaction.reply({ content: '🔓 تم فتح الروم', ephemeral: true });
+    } else if (interaction.customId === 'temp_hide') {
+        await channel.permissionOverwrites.edit(interaction.guild.id, { ViewChannel: false });
+        interaction.reply({ content: '👁️ تم إخفاء الروم', ephemeral: true });
     }
 });
 
-// تشغيل سيرفر الويب الوهمي لـ Render (يجب أن يكون في نهاية الملف وقبل تسجيل الدخول أو بعده)
 const http = require('http');
-const server = http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('I am alive!');
-});
-server.listen(3000, () => {
-  console.log('Web server is running on port 3000.');
-});
+http.createServer((req, res) => res.end('Alive')).listen(3000);
 
 client.login(process.env.TOKEN);
