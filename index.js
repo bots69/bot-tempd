@@ -36,7 +36,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
     }
 });
 
-// أمر إرسال لوحة التحكم (مقتصر حصرياً على الرول المحدد)
+// أمر إرسال لوحة التحكم (مقتصر حصرياً على الرول الإداري)
 client.on('messageCreate', async (msg) => {
     if (msg.content === '-setup' || msg.content === '!setup') {
         if (!msg.member || !msg.member.roles.cache.has(ADMIN_ROLE_ID)) {
@@ -73,7 +73,7 @@ client.on('messageCreate', async (msg) => {
     }
 });
 
-// نظام الأزرار والتحكم الكامل (مقتصر حصرياً على الرول المحدد أو مالك الروم)
+// نظام الأزرار والتحكم الكامل
 client.on('interactionCreate', async (i) => {
     if (!i.isButton()) return;
     const channel = i.member.voice.channel;
@@ -85,7 +85,7 @@ client.on('interactionCreate', async (i) => {
         return i.reply({ content: 'هذا ليس رومك أو لست متصلا به', ephemeral: true });
     }
 
-    // إلغاء أي جامع رسائل سابق لهذا المستخدم لكي يعتمد الأمر الجديد فقط
+    // إلغاء أي جامع رسائل سابق لهذا المستخدم
     if (activeCollectors.has(i.user.id)) {
         const oldCollector = activeCollectors.get(i.user.id);
         oldCollector.stop();
@@ -94,7 +94,7 @@ client.on('interactionCreate', async (i) => {
 
     const reply = (text) => i.reply({ content: text, ephemeral: true });
 
-    // الأزرار الأربعة الفورية التي لا تتطلب كتابة أو منشن
+    // الأزرار الأربعة الفورية (لا تحتاج كتابة ولا تفك الشات)
     if (i.customId === 'lock') {
         await channel.permissionOverwrites.edit(i.guild.id, { Connect: false });
         reply('تم قفل الروم');
@@ -111,117 +111,91 @@ client.on('interactionCreate', async (i) => {
         await channel.permissionOverwrites.edit(i.guild.id, { ViewChannel: true });
         reply('تم اظهار الروم');
     } 
-    // الأزرار التي تتطلب إدخال كتابي أو منشن وتستدعي فتح الشات عبر الرسالة المؤقتة
-    else if (i.customId === 'rename') {
-        reply('اكتب الاسم الجديد للروم');
-        const col = i.channel.createMessageCollector({ filter: m => m.author.id === i.user.id, time: 20000 });
-        activeCollectors.set(i.user.id, col);
-        
-        col.on('collect', async m => {
-            await m.delete().catch(() => {});
-            await channel.setName(m.content);
-            i.followUp({ content: 'تم تغيير الاسم', ephemeral: true });
-            activeCollectors.delete(i.user.id);
-            col.stop();
-        });
-    } 
-    else if (i.customId === 'transfer') {
-        reply('ارفق منشن الشخص الذي تريد نقل الملكية له');
-        const col = i.channel.createMessageCollector({ filter: m => m.author.id === i.user.id, time: 20000 });
-        activeCollectors.set(i.user.id, col);
+    // باقي الأزرار التي تتطلب كتابة (يتم فك الشات تلقائياً للمستخدم ليتمكن من الكتابة)
+    else if (['rename', 'transfer', 'limit', 'ban', 'allow', 'kick', 'mute', 'unmute'].includes(i.customId)) {
+        // فك الشات للمستخدم تلقائياً عند النضغط على أي زر يتطلب إدخال
+        await i.channel.permissionOverwrites.edit(i.user.id, { SendMessages: true }).catch(() => {});
 
-        col.on('collect', async m => {
-            const member = m.mentions.members.first();
-            await m.delete().catch(() => {});
-            if (!member) {
-                i.followUp({ content: 'منشن غير صحيح', ephemeral: true });
-                activeCollectors.delete(i.user.id);
-                return col.stop();
-            }
-            if (!channel.members.has(member.id)) {
-                i.followUp({ content: 'الشخص ليس برومك', ephemeral: true });
-                activeCollectors.delete(i.user.id);
-                return col.stop();
-            }
-            
-            roomOwners.set(channel.id, member.id);
-            i.followUp({ content: 'تم نقل الملكية', ephemeral: true });
-            activeCollectors.delete(i.user.id);
-            col.stop();
-        });
-    } 
-    else if (i.customId === 'limit') {
-        reply('اكتب حد الروم');
+        if (i.customId === 'rename') {
+            reply('اكتب الاسم الجديد للروم');
+        } else if (i.customId === 'transfer') {
+            reply('ارفق منشن الشخص الذي تريد نقل الملكية له');
+        } else if (i.customId === 'limit') {
+            reply('اكتب حد الروم');
+        } else {
+            reply('ارفق منشن الشخص');
+        }
+
         const col = i.channel.createMessageCollector({ filter: m => m.author.id === i.user.id, time: 20000 });
         activeCollectors.set(i.user.id, col);
 
         col.on('collect', async m => {
             await m.delete().catch(() => {});
-            const limit = parseInt(m.content);
-            if (isNaN(limit)) {
-                i.followUp({ content: 'رقم غير صحيح', ephemeral: true });
-                activeCollectors.delete(i.user.id);
-                return col.stop();
-            }
-            if (limit > 50) {
-                i.followUp({ content: 'اعلى حد 50', ephemeral: true });
-                activeCollectors.delete(i.user.id);
-                return col.stop();
-            }
-            
-            await channel.setUserLimit(limit);
-            
-            if (channel.members.size > limit) {
-                const membersArray = Array.from(channel.members.values());
-                const ownerId = roomOwners.get(channel.id);
-                const extraMembers = membersArray.filter(m => m.id !== ownerId);
-                
-                while (channel.members.size > limit && extraMembers.length > 0) {
-                    const randomIndex = Math.floor(Math.random() * extraMembers.length);
-                    const randomMember = extraMembers.splice(randomIndex, 1)[0];
-                    await randomMember.voice.disconnect().catch(() => {});
-                }
-            }
 
-            i.followUp({ content: 'تم ضبط الحد', ephemeral: true });
-            activeCollectors.delete(i.user.id);
-            col.stop();
-        });
-    }
-    else if (['ban', 'allow', 'kick', 'mute', 'unmute'].includes(i.customId)) {
-        reply('ارفق منشن الشخص');
-        const col = i.channel.createMessageCollector({ filter: m => m.author.id === i.user.id, time: 20000 });
-        activeCollectors.set(i.user.id, col);
-
-        col.on('collect', async m => {
-            const member = m.mentions.members.first();
-            await m.delete().catch(() => {});
-            if (!member) {
-                i.followUp({ content: 'منشن غير صحيح', ephemeral: true });
-                activeCollectors.delete(i.user.id);
-                return col.stop();
-            }
-
-            if (i.customId === 'ban') {
-                await channel.permissionOverwrites.edit(member.id, { Connect: false });
-                i.followUp({ content: 'تم منع الشخص', ephemeral: true });
-            } else if (i.customId === 'allow') {
-                await channel.permissionOverwrites.edit(member.id, { Connect: null });
-                i.followUp({ content: 'تم السماح للشخص', ephemeral: true });
-            } else if (i.customId === 'kick') {
-                if (member.voice.channelId === channel.id) {
-                    await member.voice.disconnect();
-                    i.followUp({ content: 'تم طرد العضو', ephemeral: true });
-                } else {
+            if (i.customId === 'rename') {
+                await channel.setName(m.content);
+                i.followUp({ content: 'تم تغيير الاسم', ephemeral: true });
+            } 
+            else if (i.customId === 'transfer') {
+                const member = m.mentions.members.first();
+                if (!member) {
+                    i.followUp({ content: 'منشن غير صحيح', ephemeral: true });
+                } else if (!channel.members.has(member.id)) {
                     i.followUp({ content: 'الشخص ليس برومك', ephemeral: true });
+                } else {
+                    roomOwners.set(channel.id, member.id);
+                    i.followUp({ content: 'تم نقل الملكية', ephemeral: true });
                 }
-            } else if (i.customId === 'mute') {
-                await channel.permissionOverwrites.edit(member.id, { Speak: false });
-                i.followUp({ content: 'تم اعطاء ميوت', ephemeral: true });
-            } else if (i.customId === 'unmute') {
-                await channel.permissionOverwrites.edit(member.id, { Speak: null });
-                i.followUp({ content: 'تم فك الميوت', ephemeral: true });
+            } 
+            else if (i.customId === 'limit') {
+                const limit = parseInt(m.content);
+                if (isNaN(limit)) {
+                    i.followUp({ content: 'رقم غير صحيح', ephemeral: true });
+                } else if (limit > 50) {
+                    i.followUp({ content: 'اعلى حد 50', ephemeral: true });
+                } else {
+                    await channel.setUserLimit(limit);
+                    if (channel.members.size > limit) {
+                        const membersArray = Array.from(channel.members.values());
+                        const ownerId = roomOwners.get(channel.id);
+                        const extraMembers = membersArray.filter(m => m.id !== ownerId);
+                        while (channel.members.size > limit && extraMembers.length > 0) {
+                            const randomIndex = Math.floor(Math.random() * extraMembers.length);
+                            const randomMember = extraMembers.splice(randomIndex, 1)[0];
+                            await randomMember.voice.disconnect().catch(() => {});
+                        }
+                    }
+                    i.followUp({ content: 'تم ضبط الحد', ephemeral: true });
+                }
             }
+            else {
+                const member = m.mentions.members.first();
+                if (!member) {
+                    i.followUp({ content: 'منشن غير صحيح', ephemeral: true });
+                } else {
+                    if (i.customId === 'ban') {
+                        await channel.permissionOverwrites.edit(member.id, { Connect: false });
+                        i.followUp({ content: 'تم منع الشخص', ephemeral: true });
+                    } else if (i.customId === 'allow') {
+                        await channel.permissionOverwrites.edit(member.id, { Connect: null });
+                        i.followUp({ content: 'تم السماح للشخص', ephemeral: true });
+                    } else if (i.customId === 'kick') {
+                        if (member.voice.channelId === channel.id) {
+                            await member.voice.disconnect();
+                            i.followUp({ content: 'تم طرد العضو', ephemeral: true });
+                        } else {
+                            i.followUp({ content: 'الشخص ليس برومك', ephemeral: true });
+                        }
+                    } else if (i.customId === 'mute') {
+                        await channel.permissionOverwrites.edit(member.id, { Speak: false });
+                        i.followUp({ content: 'تم اعطاء ميوت', ephemeral: true });
+                    } else if (i.customId === 'unmute') {
+                        await channel.permissionOverwrites.edit(member.id, { Speak: null });
+                        i.followUp({ content: 'تم فك الميوت', ephemeral: true });
+                    }
+                }
+            }
+
             activeCollectors.delete(i.user.id);
             col.stop();
         });
