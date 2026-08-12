@@ -7,8 +7,10 @@ const client = new Client({
 const CREATE_VOICE_CHANNEL_ID = '1536689417136119888';
 const PARENT_CATEGORY_ID = '1535491760627646524';
 const ADMIN_ROLE_ID = '1535375782736560128';
-const TARGET_ROOM_ID = '1536693109662949406'; // الروم المحدد فقط لحذف الرسائل وقفل الشات
+const TARGET_ROOM_ID = '1536693109662949406'; // الروم المحدد لحذف الرسائل وقفل الشات
 const LOG_ROOM_ID = '1536977594702888960'; // روم سجلات الدخول والخروج الصوتي
+const DISCONNECT_LOG_ROOM_ID = '1537003891286347828'; // روم سجلات الدفن والسحب
+const CONTROL_ROLE_ID = '1536989468492435496'; // رول التحكم بالدفن
 const SECRET_WORD = 'كلمة_السر'; // ضع الكلمة المطلوبة هنا
 const roomOwners = new Map();
 const activeCollectors = new Map();
@@ -77,7 +79,7 @@ client.on('messageCreate', async (msg) => {
     }
 });
 
-// نظام إشعارات الدخول والخروج للصوتيات تلقائياً
+// نظام تتبع الحالة الصوتية (الدخول، الخروج، الدفن، والسحب)
 client.on('voiceStateUpdate', async (oldState, newState) => {
     // 1. إنشاء روم مؤقت عند دخول روم صناعة الرومات
     if (newState.channelId === CREATE_VOICE_CHANNEL_ID) {
@@ -100,13 +102,83 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         }
     }
 
-    // 3. إرسال إشعار الدخول (Join Channel)
     const logChannel = await newState.guild.channels.fetch(LOG_ROOM_ID).catch(() => {});
+    const disconnectLogChannel = await newState.guild.channels.fetch(DISCONNECT_LOG_ROOM_ID).catch(() => {});
+
+    // 3. مراقبة الدفن (Disconnect / Server Mute) أو السحب (Move Member)
+    // الكشف عن الدفن (عندما يتم قطع اتصال الشخص أو عمل ميوت سيرفر له من قبل شخص آخر)
+    if (disconnectLogChannel) {
+        // حالة الدفن أو قطع الاتصال من روم
+        if (oldState.channelId && !newState.channelId) {
+            // يمكن التحقق مما إذا تم طرده أو فصله
+            // سنرسل إشعار Disconnect Member
+            const member = newState.member;
+            const leftChannel = oldState.channel;
+
+            // محاولة معرفة من قام بفعل ذلك عبر سجل التدقيق (Audit Logs)
+            let executorTag = member.user.tag;
+            let executorAvatar = member.user.displayAvatarURL();
+            
+            try {
+                const fetchedLogs = await newState.guild.fetchAuditLogs({
+                    limit: 1,
+                    type: 20, // MEMBER_DISCONNECT أو نحو ذلك
+                });
+                const auditLog = fetchedLogs.entries.first();
+                if (auditLog && auditLog.target.id === member.id && (Date.now() - auditLog.createdTimestamp < 5000)) {
+                    executorTag = auditLog.executor.tag;
+                    executorAvatar = auditLog.executor.displayAvatarURL();
+                }
+            } catch (e) {}
+
+            const membersText = leftChannel && leftChannel.members.size > 0 
+                ? Array.from(leftChannel.members.values()).map(m => `<@${m.id}> ${m.voice.serverMute ? '🔇' : ''}`).join('\n')
+                : 'No Members In\nChannel';
+
+            const embed = new EmbedBuilder()
+                .setAuthor({ name: executorTag, iconURL: executorAvatar })
+                .setTitle('Disconnect Member')
+                .setDescription(`**To :** <@${member.id}>\n**By :** <@${member.id}>\n**From :** ${leftChannel ? `<#${leftChannel.id}>` : '#unknown'}\n**Members :**\n${membersText}`)
+                .setColor(0x2f3136)
+                .setTimestamp();
+
+            await disconnectLogChannel.send({ embeds: [embed] }).catch(() => {});
+        }
+
+        // حالة سحب عضو (Move Member) أو تغيير روم
+        if (oldState.channelId && newState.channelId && oldState.channelId !== newState.channelId) {
+            const member = newState.member;
+            let executorTag = member.user.tag;
+            let executorAvatar = member.user.displayAvatarURL();
+
+            try {
+                const fetchedLogs = await newState.guild.fetchAuditLogs({
+                    limit: 1,
+                    type: 24, // MEMBER_MOVE
+                });
+                const auditLog = fetchedLogs.entries.first();
+                if (auditLog && auditLog.target.id === member.id && (Date.now() - auditLog.createdTimestamp < 5000)) {
+                    executorTag = auditLog.executor.tag;
+                    executorAvatar = auditLog.executor.displayAvatarURL();
+                }
+            } catch (e) {}
+
+            const embed = new EmbedBuilder()
+                .setAuthor({ name: executorTag, iconURL: executorAvatar })
+                .setTitle('Move Member')
+                .setDescription(`**To :** <@${member.id}>\n**By :** <@${member.id}>\n**From :** <#${oldState.channelId}>\n**To :** <#${newState.channelId}>`)
+                .setColor(0x2f3136)
+                .setTimestamp();
+
+            await disconnectLogChannel.send({ embeds: [embed] }).catch(() => {});
+        }
+    }
+
+    // 4. إرسال إشعار الدخول (Join Channel)
     if (logChannel && !oldState.channelId && newState.channelId) {
         const member = newState.member;
         const joinedChannel = newState.channel;
         
-        // جلب الأعضاء الموجودين في الروم وترتيبهم تحت بعض
         const otherMembers = Array.from(joinedChannel.members.values())
             .filter(m => m.id !== member.id)
             .map(m => `<@${m.id}>`);
@@ -123,7 +195,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         await logChannel.send({ embeds: [embed] }).catch(() => {});
     }
 
-    // 4. إرسال إشعار الخروج (Leave Channel)
+    // 5. إرسال إشعار الخروج (Leave Channel)
     if (logChannel && oldState.channelId && (!newState.channelId || newState.channelId !== oldState.channelId)) {
         const member = oldState.member;
         const leftChannel = oldState.channel;
@@ -184,7 +256,6 @@ client.on('interactionCreate', async (i) => {
         reply('تم اظهار الروم');
     } 
     else if (['rename', 'transfer', 'limit', 'ban', 'allow', 'kick', 'mute', 'unmute'].includes(i.customId)) {
-        // فتح الشات في الروم النصي (i.channel) مؤقتاً
         await i.channel.permissionOverwrites.edit(i.user.id, { SendMessages: true }).catch(() => {});
 
         if (i.customId === 'rename') {
@@ -202,8 +273,6 @@ client.on('interactionCreate', async (i) => {
 
         col.on('collect', async m => {
             await m.delete().catch(() => {});
-
-            // إزالة صلاحية الكتابة فوراً من الروم النصي (i.channel) قبل تنفيذ أو معالجة أي شيء وبدون تأخير
             await i.channel.permissionOverwrites.delete(i.user.id).catch(() => {});
 
             if (i.customId === 'rename') {
@@ -274,7 +343,6 @@ client.on('interactionCreate', async (i) => {
             col.stop();
         });
 
-        // إذا انتهى الوقت (20 ثانية) ولم يكتب شيئاً، قم بحذف الصلاحية أيضاً
         col.on('end', async (collected, reason) => {
             if (reason === 'time') {
                 await i.channel.permissionOverwrites.delete(i.user.id).catch(() => {});
