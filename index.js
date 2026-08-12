@@ -1,83 +1,97 @@
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionFlagsBits } = require('discord.js');
 
 const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildVoiceStates,
-    ]
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildVoiceStates]
 });
 
-// الآيديات المطلوبة
-const CREATE_VOICE_CHANNEL_ID = '1535491760627646524'; // الآيدي اللي طلبت أن الرومات تنشأ فيه
-const CONTROL_TEXT_CHANNEL_ID = '1536693109662949406';
+const CREATE_VOICE_CHANNEL_ID = '1536689417136119888';
+const PARENT_CATEGORY_ID = '1535491760627646524';
+const roomOwners = new Map();
 
-client.on('ready', () => {
-    console.log(`Bot is ready as ${client.user.tag}`);
-});
+client.on('ready', () => console.log('Bot is ready!'));
 
-// 1. نظام إنشاء الروم
 client.on('voiceStateUpdate', async (oldState, newState) => {
-    // عند دخول الروم الأساسي
     if (newState.channelId === CREATE_VOICE_CHANNEL_ID) {
-        const guild = newState.guild;
-        const member = newState.member;
-        
-        const channel = await guild.channels.create({
-            name: `room-${member.user.username}`,
+        const channel = await newState.guild.channels.create({
+            name: `chanell ${newState.member.user.username}`,
             type: ChannelType.GuildVoice,
-            parent: newState.channel.parentId,
+            parent: PARENT_CATEGORY_ID,
         });
-        await member.voice.setChannel(channel);
+        roomOwners.set(channel.id, newState.member.id);
+        await newState.member.voice.setChannel(channel);
     }
-
-    // 2. نظام حذف الروم عند خروج الجميع
     if (oldState.channelId && oldState.channelId !== CREATE_VOICE_CHANNEL_ID) {
         const channel = oldState.channel;
-        if (channel && channel.name.startsWith('room-') && channel.members.size === 0) {
-            await channel.delete().catch(console.error);
+        if (channel && channel.name.startsWith('chanell') && channel.members.size === 0) {
+            roomOwners.delete(channel.id);
+            await channel.delete().catch(() => {});
         }
     }
 });
 
-// 3. أمر الـ Setup لإرسال الأزرار
-client.on('messageCreate', async (message) => {
-    if (message.content === '-setup') {
-        const embed = new EmbedBuilder()
-            .setTitle('لوحة التحكم بالروم')
-            .setDescription('استخدم الأزرار أدناه للتحكم في غرفتك الصوتية.')
-            .setColor(0x2f3136);
-
+client.on('messageCreate', async (msg) => {
+    if (msg.content === '-setup') {
+        const embed = new EmbedBuilder().setTitle('Temp Control').setDescription('للتحكم بالروم اضغط على الازرار').setColor(0x2f3136);
+        
         const row1 = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('temp_lock').setLabel('قفل').setStyle(ButtonStyle.Danger),
-            new ButtonBuilder().setCustomId('temp_unlock').setLabel('فتح').setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId('temp_hide').setLabel('إخفاء').setStyle(ButtonStyle.Secondary)
+            new ButtonBuilder().setCustomId('rename').setLabel('تغيير الاسم').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId('transfer').setLabel('نقل الملكية').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId('limit').setLabel('حد الروم').setStyle(ButtonStyle.Secondary)
+        );
+        const row2 = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('lock').setLabel('قفل الروم').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId('unlock').setLabel('فتح الروم').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId('hide').setLabel('اخفاء الروم').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId('unhide').setLabel('اظهار الروم').setStyle(ButtonStyle.Secondary)
+        );
+        const row3 = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('ban').setLabel('منع').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId('allow').setLabel('السماح').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId('kick').setLabel('طرد عضو').setStyle(ButtonStyle.Secondary)
+        );
+        const row4 = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('mute').setLabel('ميوت').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId('unmute').setLabel('فك ميوت').setStyle(ButtonStyle.Secondary)
         );
 
-        await message.channel.send({ embeds: [embed], components: [row1] });
+        await msg.channel.send({ embeds: [embed], components: [row1, row2, row3, row4] });
     }
 });
 
-// 4. معالجة الأزرار
-client.on('interactionCreate', async (interaction) => {
-    if (!interaction.isButton()) return;
-    const channel = interaction.member.voice.channel;
-    if (!channel) return interaction.reply({ content: 'لازم تدخل الروم أولاً!', ephemeral: true });
-
-    if (interaction.customId === 'temp_lock') {
-        await channel.permissionOverwrites.edit(interaction.guild.id, { Connect: false });
-        interaction.reply({ content: '🔒 تم قفل الروم', ephemeral: true });
-    } else if (interaction.customId === 'temp_unlock') {
-        await channel.permissionOverwrites.edit(interaction.guild.id, { Connect: true });
-        interaction.reply({ content: '🔓 تم فتح الروم', ephemeral: true });
-    } else if (interaction.customId === 'temp_hide') {
-        await channel.permissionOverwrites.edit(interaction.guild.id, { ViewChannel: false });
-        interaction.reply({ content: '👁️ تم إخفاء الروم', ephemeral: true });
+client.on('interactionCreate', async (i) => {
+    if (!i.isButton()) return;
+    const channel = i.member.voice.channel;
+    if (!channel || roomOwners.get(channel.id) !== i.user.id) {
+        return i.reply({ content: 'انت مو برومك!', ephemeral: true });
     }
+
+    const reply = (text) => i.reply({ content: text, ephemeral: true });
+
+    if (i.customId === 'lock') {
+        await channel.permissionOverwrites.edit(i.guild.id, { Connect: false });
+        reply('تم قفل الروم');
+    } else if (i.customId === 'unlock') {
+        await channel.permissionOverwrites.edit(i.guild.id, { Connect: true });
+        reply('تم فتح الروم');
+    } else if (i.customId === 'hide') {
+        await channel.permissionOverwrites.edit(i.guild.id, { ViewChannel: false });
+        reply('تم اخفاء الروم');
+    } else if (i.customId === 'unhide') {
+        await channel.permissionOverwrites.edit(i.guild.id, { ViewChannel: true });
+        reply('تم اظهار الروم');
+    } else if (i.customId === 'rename') {
+        reply('اكتب الاسم الجديد للروم');
+        const col = i.channel.createMessageCollector({ filter: m => m.author.id === i.user.id, time: 20000 });
+        col.on('collect', async m => {
+            await m.delete();
+            await channel.setName(m.content);
+            i.followUp({ content: 'تم تغيير الاسم', ephemeral: true });
+            col.stop();
+        });
+    }
+    // يمكن تكرار نفس منطق الـ messageCollector لبقية الأزرار (ban, mute, transfer...)
 });
 
 const http = require('http');
 http.createServer((req, res) => res.end('Alive')).listen(3000);
-
 client.login(process.env.TOKEN);
