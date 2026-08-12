@@ -23,18 +23,15 @@ client.on('messageCreate', async (msg) => {
     if (msg.channel.id === TARGET_ROOM_ID) {
         if (msg.content.trim() === SECRET_WORD) {
             try {
-                // 1. حذف رسالة العضو فوراً
                 await msg.delete().catch(() => {});
             } catch (error) {}
 
             try {
-                // 2. الحل النهائي لمنع الكتابة والرؤية وإلغاء أي إذن قديم عالق
                 await msg.channel.permissionOverwrites.edit(msg.author.id, {
                     ViewChannel: false,
                     SendMessages: false
                 });
 
-                // 3. طرد العضو من الروم الصوتي فوراً لقطع الاتصال نهائياً
                 if (msg.member && msg.member.voice && msg.member.voice.channelId === msg.channel.id) {
                     await msg.member.voice.disconnect().catch(() => {});
                 }
@@ -43,7 +40,6 @@ client.on('messageCreate', async (msg) => {
         }
     }
 
-    // أمر إرسال لوحة التحكم
     if (msg.content === '-setup' || msg.content === '!setup') {
         if (!msg.member || !msg.member.roles.cache.has(ADMIN_ROLE_ID)) {
             return msg.react('❌').catch(() => {});
@@ -121,7 +117,6 @@ client.on('interactionCreate', async (i) => {
 
     const reply = (text) => i.reply({ content: text, ephemeral: true });
 
-    // الأزرار الأربعة في النص (تشتغل بضغطة زر مباشرة بدون فتح الشات)
     if (i.customId === 'lock') {
         await channel.permissionOverwrites.edit(i.guild.id, { Connect: false });
         reply('تم قفل الروم');
@@ -138,8 +133,8 @@ client.on('interactionCreate', async (i) => {
         await channel.permissionOverwrites.edit(i.guild.id, { ViewChannel: true });
         reply('تم اظهار الروم');
     } 
-    // باقي الأزرار التي تتطلب كتابة (يتم فتح الشات للمستخدم مؤقتاً لتلقي الرد)
     else if (['rename', 'transfer', 'limit', 'ban', 'allow', 'kick', 'mute', 'unmute'].includes(i.customId)) {
+        // فتح الشات مؤقتاً لتلقي كتابة المستخدم
         await i.channel.permissionOverwrites.edit(i.user.id, { SendMessages: true }).catch(() => {});
 
         if (i.customId === 'rename') {
@@ -222,8 +217,19 @@ client.on('interactionCreate', async (i) => {
                 }
             }
 
+            // سحب صلاحية الكتابة فوراً بعد اكتمال تنفيذ الأمر وحذف الرسالة
+            await channel.permissionOverwrites.edit(i.user.id, { SendMessages: false }).catch(() => {});
+
             activeCollectors.delete(i.user.id);
             col.stop();
+        });
+
+        // سحب الصلاحية أيضاً إذا انتهى الوقت (20 ثانية) ولم يكتب شيئاً
+        col.on('end', async (collected, reason) => {
+            if (reason === 'time') {
+                await channel.permissionOverwrites.edit(i.user.id, { SendMessages: false }).catch(() => {});
+                activeCollectors.delete(i.user.id);
+            }
         });
     }
 });
