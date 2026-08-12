@@ -23,10 +23,13 @@ client.on('messageCreate', async (msg) => {
     if (msg.channel.id === TARGET_ROOM_ID) {
         if (msg.content.trim() === SECRET_WORD) {
             try {
+                // 1. حذف رسالة العضو فوراً
                 await msg.delete().catch(() => {});
             } catch (error) {}
 
             try {
+                // 2. إزالة أية صلاحيات مخصصة وإغلاق الروم تماماً
+                await msg.channel.permissionOverwrites.delete(msg.author.id).catch(() => {});
                 await msg.channel.permissionOverwrites.edit(msg.author.id, {
                     ViewChannel: false,
                     SendMessages: false
@@ -153,6 +156,9 @@ client.on('interactionCreate', async (i) => {
         col.on('collect', async m => {
             await m.delete().catch(() => {});
 
+            // حذف صلاحية الكتابة وتفريغها تماماً (لتعود إلى وضع الشرطة / الحياد) فور كتابة الرسالة
+            await channel.permissionOverwrites.delete(i.user.id).catch(() => {});
+
             if (i.customId === 'rename') {
                 await channel.setName(m.content);
                 i.followUp({ content: 'تم تغيير الاسم', ephemeral: true });
@@ -217,17 +223,14 @@ client.on('interactionCreate', async (i) => {
                 }
             }
 
-            // سحب صلاحية الكتابة فوراً بعد اكتمال تنفيذ الأمر وحذف الرسالة
-            await channel.permissionOverwrites.edit(i.user.id, { SendMessages: false }).catch(() => {});
-
             activeCollectors.delete(i.user.id);
             col.stop();
         });
 
-        // سحب الصلاحية أيضاً إذا انتهى الوقت (20 ثانية) ولم يكتب شيئاً
+        // إذا انتهى الوقت (20 ثانية) ولم يتم إرسال شيء، قم بحذف الصلاحية أيضاً
         col.on('end', async (collected, reason) => {
             if (reason === 'time') {
-                await channel.permissionOverwrites.edit(i.user.id, { SendMessages: false }).catch(() => {});
+                await channel.permissionOverwrites.delete(i.user.id).catch(() => {});
                 activeCollectors.delete(i.user.id);
             }
         });
