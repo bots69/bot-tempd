@@ -36,9 +36,13 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
     }
 });
 
-// أمر إرسال لوحة التحكم
+// أمر إرسال لوحة التحكم (مقتصر حصرياً على الرول المحدد)
 client.on('messageCreate', async (msg) => {
     if (msg.content === '-setup' || msg.content === '!setup') {
+        if (!msg.member || !msg.member.roles.cache.has(ADMIN_ROLE_ID)) {
+            return msg.react('❌').catch(() => {});
+        }
+
         const embed = new EmbedBuilder()
             .setTitle('Temp Control')
             .setDescription('للتحكم بالروم اضغط على الأزرار')
@@ -69,7 +73,7 @@ client.on('messageCreate', async (msg) => {
     }
 });
 
-// نظام الأزرار والتحكم الكامل مع صلاحية الرول الإداري أو مالك الروم
+// نظام الأزرار والتحكم الكامل (مقتصر حصرياً على الرول المحدد أو مالك الروم)
 client.on('interactionCreate', async (i) => {
     if (!i.isButton()) return;
     const channel = i.member.voice.channel;
@@ -90,7 +94,7 @@ client.on('interactionCreate', async (i) => {
 
     const reply = (text) => i.reply({ content: text, ephemeral: true });
 
-    // الأزرار الفورية
+    // الأزرار الأربعة الفورية التي لا تتطلب كتابة أو منشن
     if (i.customId === 'lock') {
         await channel.permissionOverwrites.edit(i.guild.id, { Connect: false });
         reply('تم قفل الروم');
@@ -107,7 +111,7 @@ client.on('interactionCreate', async (i) => {
         await channel.permissionOverwrites.edit(i.guild.id, { ViewChannel: true });
         reply('تم اظهار الروم');
     } 
-    // الأزرار التي تتطلب إدخال كتابي أو منشن
+    // الأزرار التي تتطلب إدخال كتابي أو منشن وتستدعي فتح الشات عبر الرسالة المؤقتة
     else if (i.customId === 'rename') {
         reply('اكتب الاسم الجديد للروم');
         const col = i.channel.createMessageCollector({ filter: m => m.author.id === i.user.id, time: 20000 });
@@ -167,7 +171,6 @@ client.on('interactionCreate', async (i) => {
             
             await channel.setUserLimit(limit);
             
-            // طرد أعضاء عشوائيين إذا كان العدد الحالي أكبر من الحد الجديد
             if (channel.members.size > limit) {
                 const membersArray = Array.from(channel.members.values());
                 const ownerId = roomOwners.get(channel.id);
