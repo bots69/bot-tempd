@@ -9,7 +9,8 @@ const PARENT_CATEGORY_ID = '1535491760627646524';
 const ADMIN_ROLE_ID = '1535375782736560128';
 const TARGET_ROOM_ID = '1536693109662949406'; // الروم المحدد لحذف الرسائل وقفل الشات
 const LOG_ROOM_ID = '1536977594702888960'; // روم سجلات الدخول والخروج الصوتي
-const DISCONNECT_LOG_ROOM_ID = '1537003891286347828'; // روم سجلات الدفن والسحب
+const DISCONNECT_LOG_ROOM_ID = '1537003891286347828'; // روم سجلات الدفن والسحب القديمة
+const CUSTOM_LOG_ROOM_ID = '1537032400561905674'; // الروم الجديد المخصص لسجلات الميوت والدفن والسحب الخ
 const SECRET_WORD = 'كلمة_السر'; // ضع الكلمة المطلوبة هنا
 const roomOwners = new Map();
 const activeCollectors = new Map();
@@ -74,7 +75,7 @@ client.on('messageCreate', async (msg) => {
     }
 });
 
-// نظام تتبع الحالة الصوتية الدقيق
+// نظام تتبع الحالة الصوتية الشامل والدقيق
 client.on('voiceStateUpdate', async (oldState, newState) => {
     // 1. إنشاء روم مؤقت
     if (newState.channelId === CREATE_VOICE_CHANNEL_ID) {
@@ -99,11 +100,76 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 
     const logChannel = await newState.guild.channels.fetch(LOG_ROOM_ID).catch(() => {});
     const disconnectLogChannel = await newState.guild.channels.fetch(DISCONNECT_LOG_ROOM_ID).catch(() => {});
+    const customLogChannel = await newState.guild.channels.fetch(CUSTOM_LOG_ROOM_ID).catch(() => {});
 
-    // 3. مراقبة الدفن (Disconnect الحقيقي أو الطرد/الديسكونكت من البروفايل)
+    // 3. مراقبة الميوت / فك الميوت / الدفن / فك الدفن من خلال الأوديت لوج والحالة الصوتية
+    const member = newState.member;
+    const currentChannel = newState.channel || oldState.channel;
+
+    // أ) مراقبة السيرفر ميوت (Server Mute / Unmute)
+    if (customLogChannel && oldState.serverMute !== newState.serverMute) {
+        let actionBy = null;
+        try {
+            const fetchedLogs = await newState.guild.fetchAuditLogs({
+                limit: 5,
+                type: AuditLogEvent.MemberUpdate,
+            });
+            const auditLog = fetchedLogs.entries.find(entry => 
+                entry.target.id === member.id && 
+                (Date.now() - entry.createdTimestamp < 8000)
+            );
+            if (auditLog) {
+                actionBy = auditLog.executor;
+            }
+        } catch (e) {}
+
+        if (actionBy) {
+            const isMuted = newState.serverMute;
+            const embed = new EmbedBuilder()
+                .setAuthor({ name: actionBy.tag, iconURL: actionBy.displayAvatarURL() })
+                .setTitle(isMuted ? 'Mute Member' : 'UnMute Member')
+                .setDescription(`**To :** <@${member.id}>\n**By :** <@${actionBy.id}>\n**In :** ${currentChannel ? `<#${currentChannel.id}>` : 'me'}`)
+                .setColor(0x2f3136)
+                .setTimestamp();
+
+            await customLogChannel.send({ embeds: [embed] }).catch(() => {});
+        }
+    }
+
+    // ب) مراقبة الدفن (Server Deaf / UnDeaf)
+    if (customLogChannel && oldState.serverDeaf !== newState.serverDeaf) {
+        let actionBy = null;
+        try {
+            const fetchedLogs = await newState.guild.fetchAuditLogs({
+                limit: 5,
+                type: AuditLogEvent.MemberUpdate,
+            });
+            const auditLog = fetchedLogs.entries.find(entry => 
+                entry.target.id === member.id && 
+                (Date.now() - entry.createdTimestamp < 8000)
+            );
+            if (auditLog) {
+                actionBy = auditLog.executor;
+            }
+        } catch (e) {}
+
+        if (actionBy) {
+            const isDeaf = newState.serverDeaf;
+            const inText = currentChannel ? `<#${currentChannel.id}>` : '.';
+            const embed = new EmbedBuilder()
+                .setAuthor({ name: actionBy.tag, iconURL: actionBy.displayAvatarURL() })
+                .setTitle(isDeaf ? 'Deafed Member' : 'UnDeafed Member')
+                .setDescription(`**To :** <@${member.id}>\n**By :** <@${actionBy.id}>\n**In :** ${inText}`)
+                .setColor(0x2f3136)
+                .setTimestamp();
+
+            await customLogChannel.send({ embeds: [embed] }).catch(() => {});
+        }
+    }
+
+    // 4. مراقبة الدفن الحقيقي والسحب القديم في الروم المخصص القديم أو الجديد
     if (disconnectLogChannel && oldState.channelId && !newState.channelId) {
         let disconnectedBy = null;
-        const member = newState.member;
         const leftChannel = oldState.channel;
 
         try {
@@ -120,7 +186,6 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
             }
         } catch (e) {}
 
-        // إذا كان هناك شخص مسؤول عن إخراجه (عبر البروفايل أو الطرد)
         if (disconnectedBy) {
             const membersText = leftChannel && leftChannel.members.size > 0 
                 ? Array.from(leftChannel.members.values()).map(m => `<@${m.id}>`).join('\n')
@@ -137,9 +202,8 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         }
     }
 
-    // 4. مراقبة السحب (Move Member)
+    // 5. مراقبة السحب (Move Member)
     if (disconnectLogChannel && oldState.channelId && newState.channelId && oldState.channelId !== newState.channelId) {
-        const member = newState.member;
         let executorTag = member.user.tag;
         let executorAvatar = member.user.displayAvatarURL();
         let movedBy = member;
@@ -167,11 +231,9 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         await disconnectLogChannel.send({ embeds: [embed] }).catch(() => {});
     }
 
-    // 5. إشعار الدخول (Join Channel)
+    // 6. إشعار الدخول (Join Channel) - يعمل دائماً سواء دخل أو طلع أو جاء أو راح
     if (logChannel && !oldState.channelId && newState.channelId) {
-        const member = newState.member;
         const joinedChannel = newState.channel;
-        
         const otherMembers = Array.from(joinedChannel.members.values())
             .filter(m => m.id !== member.id)
             .map(m => `<@${m.id}>`);
@@ -188,37 +250,25 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         await logChannel.send({ embeds: [embed] }).catch(() => {});
     }
 
-    // 6. إشعار الخروج العادي (Leave Channel) - فقط عند الخروج الطبيعي اليدوي
+    // 7. إشعار الخروج (Leave Channel) - يعمل أيضاً سواء خرج طبيعي أو بأي شكل
     if (logChannel && oldState.channelId && !newState.channelId) {
-        let isDisconnectAction = false;
-        try {
-            const fetchedLogs = await newState.guild.fetchAuditLogs({ limit: 5, type: AuditLogEvent.MemberDisconnect });
-            const auditLog = fetchedLogs.entries.find(entry => entry.target.id === oldState.member.id && (Date.now() - entry.createdTimestamp < 8000));
-            if (auditLog) isDisconnectAction = true;
-        } catch (e) {}
-
-        // إذا لم يكن هناك إجراء طرد أو ديسكونكت خارجي، فهذا خروج طبيعي
-        if (!isDisconnectAction) {
-            const member = oldState.member;
-            const leftChannel = oldState.channel;
-            
-            let membersText = 'No Members In\nChannel';
-            if (leftChannel) {
-                const remainingMembers = Array.from(leftChannel.members.values()).map(m => `<@${m.id}>`);
-                if (remainingMembers.length > 0) {
-                    membersText = remainingMembers.join('\n');
-                }
+        const leftChannel = oldState.channel;
+        let membersText = 'No Members In\nChannel';
+        if (leftChannel) {
+            const remainingMembers = Array.from(leftChannel.members.values()).map(m => `<@${m.id}>`);
+            if (remainingMembers.length > 0) {
+                membersText = remainingMembers.join('\n');
             }
-
-            const embed = new EmbedBuilder()
-                .setAuthor({ name: member.user.tag, iconURL: member.user.displayAvatarURL() })
-                .setTitle('Leave Channel')
-                .setDescription(`**User :** <@${member.id}>\n**From :** ${leftChannel ? `<#${leftChannel.id}>` : '#unknown'}\n**Members :**\n${membersText}`)
-                .setColor(0x2f3136)
-                .setTimestamp();
-
-            await logChannel.send({ embeds: [embed] }).catch(() => {});
         }
+
+        const embed = new EmbedBuilder()
+            .setAuthor({ name: member.user.tag, iconURL: member.user.displayAvatarURL() })
+            .setTitle('Leave Channel')
+            .setDescription(`**User :** <@${member.id}>\n**From :** ${leftChannel ? `<#${leftChannel.id}>` : '#unknown'}\n**Members :**\n${membersText}`)
+            .setColor(0x2f3136)
+            .setTimestamp();
+
+        await logChannel.send({ embeds: [embed] }).catch(() => {});
     }
 });
 
@@ -333,10 +383,10 @@ client.on('interactionCreate', async (i) => {
                             i.followUp({ content: 'الشخص ليس برومك', ephemeral: true });
                         }
                     } else if (i.customId === 'mute') {
-                        await channel.permissionOverwrites.edit(member.id, { Speak: false });
+                        await member.voice.setMute(true).catch(() => {});
                         i.followUp({ content: 'تم اعطاء ميوت', ephemeral: true });
                     } else if (i.customId === 'unmute') {
-                        await channel.permissionOverwrites.edit(member.id, { Speak: null });
+                        await member.voice.setMute(false).catch(() => {});
                         i.followUp({ content: 'تم فك الميوت', ephemeral: true });
                     }
                 }
