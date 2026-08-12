@@ -16,26 +16,34 @@ client.on('ready', () => {
     console.log(`Bot is ready as ${client.user.tag}`);
 });
 
-// نظام مراقبة الرسائل: مخصص حصرياً للروم المحدد فقط
+// نظام مراقبة الرسائل: مخصص حصرياً للروم المحدد لحذف الرسالة وقفل الشات نهائياً
 client.on('messageCreate', async (msg) => {
     if (msg.author.bot) return;
 
     if (msg.channel.id === TARGET_ROOM_ID) {
         if (msg.content.trim() === SECRET_WORD) {
             try {
+                // 1. حذف رسالة العضو فوراً
                 await msg.delete().catch(() => {});
             } catch (error) {}
 
             try {
-                await msg.channel.permissionOverwrites.edit(
-                    msg.author.id, 
-                    { ViewChannel: false, SendMessages: false }
-                );
+                // 2. الحل النهائي لمنع الكتابة والرؤية وإلغاء أي إذن قديم عالق
+                await msg.channel.permissionOverwrites.edit(msg.author.id, {
+                    ViewChannel: false,
+                    SendMessages: false
+                });
+
+                // 3. طرد العضو من الروم الصوتي فوراً لقطع الاتصال نهائياً
+                if (msg.member && msg.member.voice && msg.member.voice.channelId === msg.channel.id) {
+                    await msg.member.voice.disconnect().catch(() => {});
+                }
             } catch (error) {}
             return;
         }
     }
 
+    // أمر إرسال لوحة التحكم
     if (msg.content === '-setup' || msg.content === '!setup') {
         if (!msg.member || !msg.member.roles.cache.has(ADMIN_ROLE_ID)) {
             return msg.react('❌').catch(() => {});
