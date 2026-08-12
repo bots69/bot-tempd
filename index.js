@@ -175,3 +175,8 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 client.login(process.env.TOKEN);
+const http = require('http');
+http.createServer((req, res) => {
+  res.write('I am alive!');
+  res.end();
+}).listen(3000);
