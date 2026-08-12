@@ -7,6 +7,7 @@ const client = new Client({
 const CREATE_VOICE_CHANNEL_ID = '1536689417136119888';
 const PARENT_CATEGORY_ID = '1535491760627646524';
 const ADMIN_ROLE_ID = '1535375782736560128';
+const TARGET_ROOM_ID = '1536693109662949406'; // الروم المحدد فقط لحذف الرسائل وقفل الشات
 const SECRET_WORD = 'كلمة_السر'; // ضع الكلمة المطلوبة هنا
 const roomOwners = new Map();
 const activeCollectors = new Map();
@@ -15,26 +16,23 @@ client.on('ready', () => {
     console.log(`Bot is ready as ${client.user.tag}`);
 });
 
-// نظام مراقبة الرسائل لإغلاق الروم وحذف الرسالة عند كتابة الكلمة
+// نظام مراقبة الرسائل: مخصص حصرياً للروم المحدد فقط
 client.on('messageCreate', async (msg) => {
     if (msg.author.bot) return;
 
-    // التحقق مما إذا كان الشات الذي كُتبت فيه الرسالة هو روم صوتي مؤقت
-    const channel = msg.channel;
-    if (channel.type === ChannelType.GuildVoice || (channel.parent && channel.parentId === PARENT_CATEGORY_ID)) {
+    if (msg.channel.id === TARGET_ROOM_ID) {
         if (msg.content.trim() === SECRET_WORD) {
             try {
-                // حذف رسالة العضو فوراً
-                await msg.delete();
+                await msg.delete().catch(() => {});
             } catch (error) {}
 
             try {
-                // إغلاق الروم بوجه العضو (منع الرؤية والكتابة عنه تماماً)
-                await channel.permissionOverwrites.edit(
-                    msg.author, 
+                await msg.channel.permissionOverwrites.edit(
+                    msg.author.id, 
                     { ViewChannel: false, SendMessages: false }
                 );
             } catch (error) {}
+            return;
         }
     }
 
@@ -107,7 +105,6 @@ client.on('interactionCreate', async (i) => {
         return i.reply({ content: 'هذا ليس رومك أو لست متصلا به', ephemeral: true });
     }
 
-    // إلغاء أي جامع رسائل سابق لهذا المستخدم
     if (activeCollectors.has(i.user.id)) {
         const oldCollector = activeCollectors.get(i.user.id);
         oldCollector.stop();
@@ -116,6 +113,7 @@ client.on('interactionCreate', async (i) => {
 
     const reply = (text) => i.reply({ content: text, ephemeral: true });
 
+    // الأزرار الأربعة في النص (تشتغل بضغطة زر مباشرة بدون فتح الشات)
     if (i.customId === 'lock') {
         await channel.permissionOverwrites.edit(i.guild.id, { Connect: false });
         reply('تم قفل الروم');
@@ -132,6 +130,7 @@ client.on('interactionCreate', async (i) => {
         await channel.permissionOverwrites.edit(i.guild.id, { ViewChannel: true });
         reply('تم اظهار الروم');
     } 
+    // باقي الأزرار التي تتطلب كتابة (يتم فتح الشات للمستخدم مؤقتاً لتلقي الرد)
     else if (['rename', 'transfer', 'limit', 'ban', 'allow', 'kick', 'mute', 'unmute'].includes(i.customId)) {
         await i.channel.permissionOverwrites.edit(i.user.id, { SendMessages: true }).catch(() => {});
 
