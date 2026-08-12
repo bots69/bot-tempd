@@ -134,7 +134,7 @@ client.on('interactionCreate', async (interaction) => {
     if (!interaction.isButton()) return;
 
     const member = interaction.member;
-    const voiceChannel = member.voice.channel;
+    const voiceChannel = member?.voice?.channel;
 
     if (!voiceChannel) {
         return interaction.reply({ content: 'يجب أن تكون داخل روم صوتي لكي تستخدم أزرار التحكم!', ephemeral: true });
@@ -174,9 +174,14 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-client.login(process.env.TOKEN);
+// تشغيل سيرفر الويب الوهمي لـ Render (يجب أن يكون في نهاية الملف وقبل تسجيل الدخول أو بعده)
 const http = require('http');
-http.createServer((req, res) => {
-  res.write('I am alive!');
-  res.end();
-}).listen(3000);
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('I am alive!');
+});
+server.listen(3000, () => {
+  console.log('Web server is running on port 3000.');
+});
+
+client.login(process.env.TOKEN);
