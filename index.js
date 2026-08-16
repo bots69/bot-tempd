@@ -1,7 +1,12 @@
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionFlagsBits, AuditLogEvent } = require('discord.js');
 
 const client = new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildVoiceStates]
+    intents: [
+        GatewayIntentBits.Guilds, 
+        GatewayIntentBits.GuildMessages, 
+        GatewayIntentBits.MessageContent, 
+        GatewayIntentBits.GuildVoiceStates
+    ]
 });
 
 const CREATE_VOICE_CHANNEL_ID = '1536689417136119888';
@@ -9,9 +14,10 @@ const PARENT_CATEGORY_ID = '1535491760627646524';
 const ADMIN_ROLE_ID = '1535375782736560128';
 const TARGET_ROOM_ID = '1536693109662949406'; // الروم المحدد لحذف الرسائل وقفل الشات
 const LOG_ROOM_ID = '1536977594702888960'; // روم سجلات الدخول والخروج الصوتي
-const DISCONNECT_LOG_ROOM_ID = '1537003891286347828'; // روم سجلات الدفن والسحب القديمة
-const CUSTOM_LOG_ROOM_ID = '1537032400561905674'; // الروم الجديد المخصص لسجلات الميوت والدفن والسحب الخ
+const DISCONNECT_LOG_ROOM_ID = '1537003891286347828'; // روم سجلات السحب والدفن القديمة
+const CUSTOM_LOG_ROOM_ID = '1537032400561905674'; // الروم الجديد المخصص لسجلات الميوت والدفن الخ
 const SECRET_WORD = 'كلمة_السر'; // ضع الكلمة المطلوبة هنا
+
 const roomOwners = new Map();
 const activeCollectors = new Map();
 
@@ -75,7 +81,7 @@ client.on('messageCreate', async (msg) => {
     }
 });
 
-// نظام تتبع الحالة الصوتية الشامل والدقيق
+// نظام تتبع الحالة الصوتية
 client.on('voiceStateUpdate', async (oldState, newState) => {
     // 1. إنشاء روم مؤقت
     if (newState.channelId === CREATE_VOICE_CHANNEL_ID) {
@@ -88,7 +94,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         await newState.member.voice.setChannel(channel);
     }
 
-    // 2. حذف الروم المؤقت إذا فاض
+    // 2. حذف الروم المؤقت إذا أصبح فارغاً
     if (oldState.channelId && oldState.channelId !== CREATE_VOICE_CHANNEL_ID) {
         const channel = oldState.channel;
         if (channel && roomOwners.has(channel.id) && channel.members.size === 0) {
@@ -102,25 +108,16 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
     const disconnectLogChannel = await newState.guild.channels.fetch(DISCONNECT_LOG_ROOM_ID).catch(() => {});
     const customLogChannel = await newState.guild.channels.fetch(CUSTOM_LOG_ROOM_ID).catch(() => {});
 
-    // 3. مراقبة الميوت / فك الميوت / الدفن / فك الدفن من خلال الأوديت لوج والحالة الصوتية
     const member = newState.member;
     const currentChannel = newState.channel || oldState.channel;
 
-    // أ) مراقبة السيرفر ميوت (Server Mute / Unmute)
+    // أ) مراقبة الميوت / فك الميوت
     if (customLogChannel && oldState.serverMute !== newState.serverMute) {
         let actionBy = null;
         try {
-            const fetchedLogs = await newState.guild.fetchAuditLogs({
-                limit: 5,
-                type: AuditLogEvent.MemberUpdate,
-            });
-            const auditLog = fetchedLogs.entries.find(entry => 
-                entry.target.id === member.id && 
-                (Date.now() - entry.createdTimestamp < 8000)
-            );
-            if (auditLog) {
-                actionBy = auditLog.executor;
-            }
+            const fetchedLogs = await newState.guild.fetchAuditLogs({ limit: 5, type: AuditLogEvent.MemberUpdate });
+            const auditLog = fetchedLogs.entries.find(entry => entry.target.id === member.id && (Date.now() - entry.createdTimestamp < 8000));
+            if (auditLog) actionBy = auditLog.executor;
         } catch (e) {}
 
         if (actionBy) {
@@ -136,30 +133,21 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         }
     }
 
-    // ب) مراقبة الدفن (Server Deaf / UnDeaf)
+    // ب) مراقبة الدفن (Deaf)
     if (customLogChannel && oldState.serverDeaf !== newState.serverDeaf) {
         let actionBy = null;
         try {
-            const fetchedLogs = await newState.guild.fetchAuditLogs({
-                limit: 5,
-                type: AuditLogEvent.MemberUpdate,
-            });
-            const auditLog = fetchedLogs.entries.find(entry => 
-                entry.target.id === member.id && 
-                (Date.now() - entry.createdTimestamp < 8000)
-            );
-            if (auditLog) {
-                actionBy = auditLog.executor;
-            }
+            const fetchedLogs = await newState.guild.fetchAuditLogs({ limit: 5, type: AuditLogEvent.MemberUpdate });
+            const auditLog = fetchedLogs.entries.find(entry => entry.target.id === member.id && (Date.now() - entry.createdTimestamp < 8000));
+            if (auditLog) actionBy = auditLog.executor;
         } catch (e) {}
 
         if (actionBy) {
             const isDeaf = newState.serverDeaf;
-            const inText = currentChannel ? `<#${currentChannel.id}>` : '.';
             const embed = new EmbedBuilder()
                 .setAuthor({ name: actionBy.tag, iconURL: actionBy.displayAvatarURL() })
                 .setTitle(isDeaf ? 'Deafed Member' : 'UnDeafed Member')
-                .setDescription(`**To :** <@${member.id}>\n**By :** <@${actionBy.id}>\n**In :** ${inText}`)
+                .setDescription(`**To :** <@${member.id}>\n**By :** <@${actionBy.id}>\n**In :** ${currentChannel ? `<#${currentChannel.id}>` : '.'}`)
                 .setColor(0x2f3136)
                 .setTimestamp();
 
@@ -167,23 +155,15 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         }
     }
 
-    // 4. مراقبة الدفن الحقيقي والسحب القديم في الروم المخصص القديم أو الجديد
+    // ج) مراقبة السحب والطرد من الروم
     if (disconnectLogChannel && oldState.channelId && !newState.channelId) {
         let disconnectedBy = null;
         const leftChannel = oldState.channel;
 
         try {
-            const fetchedLogs = await newState.guild.fetchAuditLogs({
-                limit: 5,
-                type: AuditLogEvent.MemberDisconnect,
-            });
-            const auditLog = fetchedLogs.entries.find(entry => 
-                entry.target.id === member.id && 
-                (Date.now() - entry.createdTimestamp < 8000)
-            );
-            if (auditLog) {
-                disconnectedBy = auditLog.executor;
-            }
+            const fetchedLogs = await newState.guild.fetchAuditLogs({ limit: 5, type: AuditLogEvent.MemberDisconnect });
+            const auditLog = fetchedLogs.entries.find(entry => entry.target.id === member.id && (Date.now() - entry.createdTimestamp < 8000));
+            if (auditLog) disconnectedBy = auditLog.executor;
         } catch (e) {}
 
         if (disconnectedBy) {
@@ -202,17 +182,14 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         }
     }
 
-    // 5. مراقبة السحب (Move Member)
+    // د) مراقبة نقل الأعضاء (Move)
     if (disconnectLogChannel && oldState.channelId && newState.channelId && oldState.channelId !== newState.channelId) {
         let executorTag = member.user.tag;
         let executorAvatar = member.user.displayAvatarURL();
         let movedBy = member;
 
         try {
-            const fetchedLogs = await newState.guild.fetchAuditLogs({
-                limit: 5,
-                type: AuditLogEvent.MemberMove,
-            });
+            const fetchedLogs = await newState.guild.fetchAuditLogs({ limit: 5, type: AuditLogEvent.MemberMove });
             const auditLog = fetchedLogs.entries.find(entry => entry.target.id === member.id && (Date.now() - entry.createdTimestamp < 8000));
             if (auditLog) {
                 movedBy = auditLog.executor;
@@ -231,13 +208,10 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         await disconnectLogChannel.send({ embeds: [embed] }).catch(() => {});
     }
 
-    // 6. إشعار الدخول (Join Channel) - يعمل دائماً سواء دخل أو طلع أو جاء أو راح
+    // هـ) سجلات الدخول والخروج العامة
     if (logChannel && !oldState.channelId && newState.channelId) {
         const joinedChannel = newState.channel;
-        const otherMembers = Array.from(joinedChannel.members.values())
-            .filter(m => m.id !== member.id)
-            .map(m => `<@${m.id}>`);
-        
+        const otherMembers = Array.from(joinedChannel.members.values()).filter(m => m.id !== member.id).map(m => `<@${m.id}>`);
         const membersText = otherMembers.length > 0 ? otherMembers.join('\n') : `No Members In\nChannel`;
 
         const embed = new EmbedBuilder()
@@ -250,15 +224,12 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         await logChannel.send({ embeds: [embed] }).catch(() => {});
     }
 
-    // 7. إشعار الخروج (Leave Channel) - يعمل أيضاً سواء خرج طبيعي أو بأي شكل
     if (logChannel && oldState.channelId && !newState.channelId) {
         const leftChannel = oldState.channel;
         let membersText = 'No Members In\nChannel';
         if (leftChannel) {
             const remainingMembers = Array.from(leftChannel.members.values()).map(m => `<@${m.id}>`);
-            if (remainingMembers.length > 0) {
-                membersText = remainingMembers.join('\n');
-            }
+            if (remainingMembers.length > 0) membersText = remainingMembers.join('\n');
         }
 
         const embed = new EmbedBuilder()
@@ -272,7 +243,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
     }
 });
 
-// نظام الأزرار والتحكم الكامل
+// نظام الأزرار والتفاعل
 client.on('interactionCreate', async (i) => {
     if (!i.isButton()) return;
     const channel = i.member.voice.channel;
@@ -311,15 +282,10 @@ client.on('interactionCreate', async (i) => {
     else if (['rename', 'transfer', 'limit', 'ban', 'allow', 'kick', 'mute', 'unmute'].includes(i.customId)) {
         await i.channel.permissionOverwrites.edit(i.user.id, { SendMessages: true }).catch(() => {});
 
-        if (i.customId === 'rename') {
-            reply('اكتب الاسم الجديد للروم');
-        } else if (i.customId === 'transfer') {
-            reply('ارفق منشن الشخص الذي تريد نقل الملكية له');
-        } else if (i.customId === 'limit') {
-            reply('اكتب حد الروم');
-        } else {
-            reply('ارفق منشن الشخص');
-        }
+        if (i.customId === 'rename') reply('اكتب الاسم الجديد للروم');
+        else if (i.customId === 'transfer') reply('ارفق منشن الشخص الذي تريد نقل الملكية له');
+        else if (i.customId === 'limit') reply('اكتب حد الروم');
+        else reply('ارفق منشن الشخص');
 
         const col = i.channel.createMessageCollector({ filter: m => m.author.id === i.user.id, time: 20000 });
         activeCollectors.set(i.user.id, col);
@@ -334,41 +300,26 @@ client.on('interactionCreate', async (i) => {
             } 
             else if (i.customId === 'transfer') {
                 const member = m.mentions.members.first();
-                if (!member) {
-                    i.followUp({ content: 'منشن غير صحيح', ephemeral: true });
-                } else if (!channel.members.has(member.id)) {
-                    i.followUp({ content: 'الشخص ليس برومك', ephemeral: true });
-                } else {
+                if (!member) i.followUp({ content: 'منشن غير صحيح', ephemeral: true });
+                else if (!channel.members.has(member.id)) i.followUp({ content: 'الشخص ليس برومك', ephemeral: true });
+                else {
                     roomOwners.set(channel.id, member.id);
                     i.followUp({ content: 'تم نقل الملكية', ephemeral: true });
                 }
             } 
             else if (i.customId === 'limit') {
                 const limit = parseInt(m.content);
-                if (isNaN(limit)) {
-                    i.followUp({ content: 'رقم غير صحيح', ephemeral: true });
-                } else if (limit > 50) {
-                    i.followUp({ content: 'اعلى حد 50', ephemeral: true });
-                } else {
+                if (isNaN(limit)) i.followUp({ content: 'رقم غير صحيح', ephemeral: true });
+                else if (limit > 50) i.followUp({ content: 'اعلى حد 50', ephemeral: true });
+                else {
                     await channel.setUserLimit(limit);
-                    if (channel.members.size > limit) {
-                        const membersArray = Array.from(channel.members.values());
-                        const ownerId = roomOwners.get(channel.id);
-                        const extraMembers = membersArray.filter(m => m.id !== ownerId);
-                        while (channel.members.size > limit && extraMembers.length > 0) {
-                            const randomIndex = Math.floor(Math.random() * extraMembers.length);
-                            const randomMember = extraMembers.splice(randomIndex, 1)[0];
-                            await randomMember.voice.disconnect().catch(() => {});
-                        }
-                    }
                     i.followUp({ content: 'تم ضبط الحد', ephemeral: true });
                 }
             }
             else {
                 const member = m.mentions.members.first();
-                if (!member) {
-                    i.followUp({ content: 'منشن غير صحيح', ephemeral: true });
-                } else {
+                if (!member) i.followUp({ content: 'منشن غير صحيح', ephemeral: true });
+                else {
                     if (i.customId === 'ban') {
                         await channel.permissionOverwrites.edit(member.id, { Connect: false });
                         i.followUp({ content: 'تم منع الشخص', ephemeral: true });
@@ -379,9 +330,7 @@ client.on('interactionCreate', async (i) => {
                         if (member.voice.channelId === channel.id) {
                             await member.voice.disconnect();
                             i.followUp({ content: 'تم طرد العضو', ephemeral: true });
-                        } else {
-                            i.followUp({ content: 'الشخص ليس برومك', ephemeral: true });
-                        }
+                        } else i.followUp({ content: 'الشخص ليس برومك', ephemeral: true });
                     } else if (i.customId === 'mute') {
                         await member.voice.setMute(true).catch(() => {});
                         i.followUp({ content: 'تم اعطاء ميوت', ephemeral: true });
