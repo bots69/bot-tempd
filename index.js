@@ -333,4 +333,6 @@ http.createServer((req, res) => {
     console.log(`Server is running on port ${PORT}`);
 });
 
-client.login(process.env.TOKEN);
+client.login(process.env.TOKEN).catch((error) => {
+    console.error('خطأ في تسجيل دخول البوت:', error);
+});
