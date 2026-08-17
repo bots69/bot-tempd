@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionFlagsBits, AuditLogEvent } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, AuditLogEvent } = require('discord.js');
 
 const client = new Client({
     intents: [
@@ -12,11 +12,11 @@ const client = new Client({
 const CREATE_VOICE_CHANNEL_ID = '1536689417136119888';
 const PARENT_CATEGORY_ID = '1535491760627646524';
 const ADMIN_ROLE_ID = '1535375782736560128';
-const TARGET_ROOM_ID = '1536693109662949406'; // الروم المحدد لحذف الرسائل وقفل الشات
-const LOG_ROOM_ID = '1536977594702888960'; // روم سجلات الدخول والخروج الصوتي
-const DISCONNECT_LOG_ROOM_ID = '1537003891286347828'; // روم سجلات السحب والدفن القديمة
-const CUSTOM_LOG_ROOM_ID = '1537032400561905674'; // الروم الجديد المخصص لسجلات الميوت والدفن الخ
-const SECRET_WORD = 'كلمة_السر'; // ضع الكلمة المطلوبة هنا
+const TARGET_ROOM_ID = '1536693109662949406'; 
+const LOG_ROOM_ID = '1536977594702888960'; 
+const DISCONNECT_LOG_ROOM_ID = '1537003891286347828'; 
+const CUSTOM_LOG_ROOM_ID = '1537032400561905674'; 
+const SECRET_WORD = 'كلمة_السر'; 
 
 const roomOwners = new Map();
 const activeCollectors = new Map();
@@ -25,7 +25,7 @@ client.on('ready', () => {
     console.log(`Bot is ready as ${client.user.tag}`);
 });
 
-// نظام مراقبة الرسائل
+// نظام مراقبة الرسائل وحماية الروم المستهدف
 client.on('messageCreate', async (msg) => {
     if (msg.author.bot) return;
 
@@ -81,20 +81,22 @@ client.on('messageCreate', async (msg) => {
     }
 });
 
-// نظام تتبع الحالة الصوتية
+// نظام الصوت والسجلات
 client.on('voiceStateUpdate', async (oldState, newState) => {
-    // 1. إنشاء روم مؤقت
     if (newState.channelId === CREATE_VOICE_CHANNEL_ID) {
-        const channel = await newState.guild.channels.create({
-            name: `channel ${newState.member.user.username}`,
-            type: ChannelType.GuildVoice,
-            parent: PARENT_CATEGORY_ID,
-        });
-        roomOwners.set(channel.id, newState.member.id);
-        await newState.member.voice.setChannel(channel);
+        try {
+            const channel = await newState.guild.channels.create({
+                name: `channel ${newState.member.user.username}`,
+                type: ChannelType.GuildVoice,
+                parent: PARENT_CATEGORY_ID,
+            });
+            roomOwners.set(channel.id, newState.member.id);
+            await newState.member.voice.setChannel(channel);
+        } catch (e) {
+            console.error('Error creating voice channel:', e);
+        }
     }
 
-    // 2. حذف الروم المؤقت إذا أصبح فارغاً
     if (oldState.channelId && oldState.channelId !== CREATE_VOICE_CHANNEL_ID) {
         const channel = oldState.channel;
         if (channel && roomOwners.has(channel.id) && channel.members.size === 0) {
@@ -107,11 +109,9 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
     const logChannel = await newState.guild.channels.fetch(LOG_ROOM_ID).catch(() => {});
     const disconnectLogChannel = await newState.guild.channels.fetch(DISCONNECT_LOG_ROOM_ID).catch(() => {});
     const customLogChannel = await newState.guild.channels.fetch(CUSTOM_LOG_ROOM_ID).catch(() => {});
-
     const member = newState.member;
     const currentChannel = newState.channel || oldState.channel;
 
-    // أ) مراقبة الميوت / فك الميوت
     if (customLogChannel && oldState.serverMute !== newState.serverMute) {
         let actionBy = null;
         try {
@@ -128,12 +128,10 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
                 .setDescription(`**To :** <@${member.id}>\n**By :** <@${actionBy.id}>\n**In :** ${currentChannel ? `<#${currentChannel.id}>` : 'me'}`)
                 .setColor(0x2f3136)
                 .setTimestamp();
-
             await customLogChannel.send({ embeds: [embed] }).catch(() => {});
         }
     }
 
-    // ب) مراقبة الدفن (Deaf)
     if (customLogChannel && oldState.serverDeaf !== newState.serverDeaf) {
         let actionBy = null;
         try {
@@ -150,16 +148,13 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
                 .setDescription(`**To :** <@${member.id}>\n**By :** <@${actionBy.id}>\n**In :** ${currentChannel ? `<#${currentChannel.id}>` : '.'}`)
                 .setColor(0x2f3136)
                 .setTimestamp();
-
             await customLogChannel.send({ embeds: [embed] }).catch(() => {});
         }
     }
 
-    // ج) مراقبة السحب والطرد من الروم
     if (disconnectLogChannel && oldState.channelId && !newState.channelId) {
         let disconnectedBy = null;
         const leftChannel = oldState.channel;
-
         try {
             const fetchedLogs = await newState.guild.fetchAuditLogs({ limit: 5, type: AuditLogEvent.MemberDisconnect });
             const auditLog = fetchedLogs.entries.find(entry => entry.target.id === member.id && (Date.now() - entry.createdTimestamp < 8000));
@@ -177,17 +172,14 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
                 .setDescription(`**To :** <@${member.id}>\n**By :** <@${disconnectedBy.id}>\n**From :** ${leftChannel ? `<#${leftChannel.id}>` : '#unknown'}\n**Members :**\n${membersText}`)
                 .setColor(0x2f3136)
                 .setTimestamp();
-
             await disconnectLogChannel.send({ embeds: [embed] }).catch(() => {});
         }
     }
 
-    // د) مراقبة نقل الأعضاء (Move)
     if (disconnectLogChannel && oldState.channelId && newState.channelId && oldState.channelId !== newState.channelId) {
         let executorTag = member.user.tag;
         let executorAvatar = member.user.displayAvatarURL();
         let movedBy = member;
-
         try {
             const fetchedLogs = await newState.guild.fetchAuditLogs({ limit: 5, type: AuditLogEvent.MemberMove });
             const auditLog = fetchedLogs.entries.find(entry => entry.target.id === member.id && (Date.now() - entry.createdTimestamp < 8000));
@@ -204,11 +196,9 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
             .setDescription(`**To :** <@${member.id}>\n**By :** <@${movedBy.id}>\n**From :** <#${oldState.channelId}>\n**To :** <#${newState.channelId}>`)
             .setColor(0x2f3136)
             .setTimestamp();
-
         await disconnectLogChannel.send({ embeds: [embed] }).catch(() => {});
     }
 
-    // هـ) سجلات الدخول والخروج العامة
     if (logChannel && !oldState.channelId && newState.channelId) {
         const joinedChannel = newState.channel;
         const otherMembers = Array.from(joinedChannel.members.values()).filter(m => m.id !== member.id).map(m => `<@${m.id}>`);
@@ -220,7 +210,6 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
             .setDescription(`**User :** <@${member.id}>\n**To :** <#${joinedChannel.id}>\n**Members :**\n${membersText}`)
             .setColor(0x2f3136)
             .setTimestamp();
-
         await logChannel.send({ embeds: [embed] }).catch(() => {});
     }
 
@@ -238,16 +227,14 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
             .setDescription(`**User :** <@${member.id}>\n**From :** ${leftChannel ? `<#${leftChannel.id}>` : '#unknown'}\n**Members :**\n${membersText}`)
             .setColor(0x2f3136)
             .setTimestamp();
-
         await logChannel.send({ embeds: [embed] }).catch(() => {});
     }
 });
 
-// نظام الأزرار والتفاعل
+// نظام تفاعل الأزرار
 client.on('interactionCreate', async (i) => {
     if (!i.isButton()) return;
     const channel = i.member.voice.channel;
-    
     const hasAdminRole = i.member.roles.cache.has(ADMIN_ROLE_ID);
     const isOwner = channel && roomOwners.get(channel.id) === i.user.id;
 
@@ -256,8 +243,7 @@ client.on('interactionCreate', async (i) => {
     }
 
     if (activeCollectors.has(i.user.id)) {
-        const oldCollector = activeCollectors.get(i.user.id);
-        oldCollector.stop();
+        activeCollectors.get(i.user.id).stop();
         activeCollectors.delete(i.user.id);
     }
 
@@ -266,20 +252,16 @@ client.on('interactionCreate', async (i) => {
     if (i.customId === 'lock') {
         await channel.permissionOverwrites.edit(i.guild.id, { Connect: false });
         reply('تم قفل الروم');
-    } 
-    else if (i.customId === 'unlock') {
+    } else if (i.customId === 'unlock') {
         await channel.permissionOverwrites.edit(i.guild.id, { Connect: true });
         reply('تم فتح الروم');
-    } 
-    else if (i.customId === 'hide') {
+    } else if (i.customId === 'hide') {
         await channel.permissionOverwrites.edit(i.guild.id, { ViewChannel: false });
         reply('تم اخفاء الروم');
-    } 
-    else if (i.customId === 'unhide') {
+    } else if (i.customId === 'unhide') {
         await channel.permissionOverwrites.edit(i.guild.id, { ViewChannel: true });
         reply('تم اظهار الروم');
-    } 
-    else if (['rename', 'transfer', 'limit', 'ban', 'allow', 'kick', 'mute', 'unmute'].includes(i.customId)) {
+    } else if (['rename', 'transfer', 'limit', 'ban', 'allow', 'kick', 'mute', 'unmute'].includes(i.customId)) {
         await i.channel.permissionOverwrites.edit(i.user.id, { SendMessages: true }).catch(() => {});
 
         if (i.customId === 'rename') reply('اكتب الاسم الجديد للروم');
@@ -297,8 +279,7 @@ client.on('interactionCreate', async (i) => {
             if (i.customId === 'rename') {
                 await channel.setName(m.content);
                 i.followUp({ content: 'تم تغيير الاسم', ephemeral: true });
-            } 
-            else if (i.customId === 'transfer') {
+            } else if (i.customId === 'transfer') {
                 const member = m.mentions.members.first();
                 if (!member) i.followUp({ content: 'منشن غير صحيح', ephemeral: true });
                 else if (!channel.members.has(member.id)) i.followUp({ content: 'الشخص ليس برومك', ephemeral: true });
@@ -306,17 +287,14 @@ client.on('interactionCreate', async (i) => {
                     roomOwners.set(channel.id, member.id);
                     i.followUp({ content: 'تم نقل الملكية', ephemeral: true });
                 }
-            } 
-            else if (i.customId === 'limit') {
+            } else if (i.customId === 'limit') {
                 const limit = parseInt(m.content);
-                if (isNaN(limit)) i.followUp({ content: 'رقم غير صحيح', ephemeral: true });
-                else if (limit > 50) i.followUp({ content: 'اعلى حد 50', ephemeral: true });
+                if (isNaN(limit) || limit > 50) i.followUp({ content: 'رقم غير صحيح أو أكبر من 50', ephemeral: true });
                 else {
                     await channel.setUserLimit(limit);
                     i.followUp({ content: 'تم ضبط الحد', ephemeral: true });
                 }
-            }
-            else {
+            } else {
                 const member = m.mentions.members.first();
                 if (!member) i.followUp({ content: 'منشن غير صحيح', ephemeral: true });
                 else {
@@ -340,20 +318,13 @@ client.on('interactionCreate', async (i) => {
                     }
                 }
             }
-
             activeCollectors.delete(i.user.id);
             col.stop();
-        });
-
-        col.on('end', async (collected, reason) => {
-            if (reason === 'time') {
-                await i.channel.permissionOverwrites.delete(i.user.id).catch(() => {});
-                activeCollectors.delete(i.user.id);
-            }
         });
     }
 });
 
+// سيرفر الويب للحفاظ على البوت شغال
 const http = require('http');
 http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
