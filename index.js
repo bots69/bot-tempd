@@ -326,9 +326,12 @@ client.on('interactionCreate', async (i) => {
 
 // سيرفر الويب للحفاظ على البوت شغال
 const http = require('http');
+const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('I am alive');
-}).listen(3000);
+}).listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+});
 
 client.login(process.env.TOKEN);
